@@ -346,8 +346,22 @@ class _NonRetrievableBase(_MethodologyNodeBase):
     severity: Severity | None = None
 
 
-def _validate_node_id(field_name: str):
-    """Factory for per-type node_id validators using the shared RULE_ID_PATTERN."""
+# Public alias for downstream consumers (ingest parser, dashboard, tests).
+# The underscore-prefixed `_MethodologyNodeBase` remains the canonical
+# implementation symbol; `MethodologyNode` is the documented public name.
+MethodologyNode = _MethodologyNodeBase
+
+
+def _validate_node_id(field_name: str, expected_prefix: str | None = None):
+    """Factory for per-type node_id validators using the shared RULE_ID_PATTERN.
+
+    If expected_prefix is provided (e.g., "SKL-"), the validator also rejects
+    IDs that match the format but use the wrong type prefix. Per
+    docs/phase-0-schema-proposal.md, each node type has a fixed prefix
+    (SKL- Skill, PBK- Playbook, TEC- Technique, ANT- AntiPattern,
+    FRB- ForbiddenResponse, PHA- Phase, RAT- Rationalization,
+    PSC- PressureScenario, EXM- WorkedExample, ROL- SubagentRole).
+    """
 
     def _validator(cls, v: str) -> str:
         if not v:
@@ -355,6 +369,11 @@ def _validate_node_id(field_name: str):
         if not RULE_ID_PATTERN.match(v):
             raise ValueError(
                 f"{field_name} '{v}' does not match required format (e.g., SKL-PROC-BRAIN-001)"
+            )
+        if expected_prefix and not v.startswith(expected_prefix):
+            raise ValueError(
+                f"{field_name} '{v}' must start with '{expected_prefix}' "
+                f"for this node type"
             )
         return v
 
@@ -367,7 +386,7 @@ def _validate_node_id(field_name: str):
 class Skill(_RetrievableBase):
     skill_id: str
 
-    _validate_skill_id = field_validator("skill_id")(_validate_node_id("skill_id"))
+    _validate_skill_id = field_validator("skill_id")(_validate_node_id("skill_id", "SKL-"))
 
 
 class Playbook(_RetrievableBase):
@@ -376,13 +395,13 @@ class Playbook(_RetrievableBase):
     preconditions: list[str] = Field(default_factory=list)
     dispatched_roles: list[str] = Field(default_factory=list)
 
-    _validate_playbook_id = field_validator("playbook_id")(_validate_node_id("playbook_id"))
+    _validate_playbook_id = field_validator("playbook_id")(_validate_node_id("playbook_id", "PBK-"))
 
 
 class Technique(_RetrievableBase):
     technique_id: str
 
-    _validate_technique_id = field_validator("technique_id")(_validate_node_id("technique_id"))
+    _validate_technique_id = field_validator("technique_id")(_validate_node_id("technique_id", "TEC-"))
 
 
 class AntiPattern(_RetrievableBase):
@@ -390,7 +409,7 @@ class AntiPattern(_RetrievableBase):
     counter_nodes: list[str]
     named_in: str | None = None
 
-    _validate_antipattern_id = field_validator("antipattern_id")(_validate_node_id("antipattern_id"))
+    _validate_antipattern_id = field_validator("antipattern_id")(_validate_node_id("antipattern_id", "ANT-"))
 
 
 class ForbiddenResponse(_RetrievableBase):
@@ -399,7 +418,7 @@ class ForbiddenResponse(_RetrievableBase):
     what_to_say_instead: str
     always_on: bool = True
 
-    _validate_forbidden_id = field_validator("forbidden_id")(_validate_node_id("forbidden_id"))
+    _validate_forbidden_id = field_validator("forbidden_id")(_validate_node_id("forbidden_id", "FRB-"))
 
     @field_validator("what_to_say_instead")
     @classmethod
@@ -419,7 +438,7 @@ class Phase(_NonRetrievableBase):
     description: str
     parent_playbook_id: str
 
-    _validate_phase_id = field_validator("phase_id")(_validate_node_id("phase_id"))
+    _validate_phase_id = field_validator("phase_id")(_validate_node_id("phase_id", "PHA-"))
 
 
 class Rationalization(_NonRetrievableBase):
@@ -428,7 +447,7 @@ class Rationalization(_NonRetrievableBase):
     counter: str
     attached_to: str
 
-    _validate_rationalization_id = field_validator("rationalization_id")(_validate_node_id("rationalization_id"))
+    _validate_rationalization_id = field_validator("rationalization_id")(_validate_node_id("rationalization_id", "RAT-"))
 
 
 class PressureScenario(_NonRetrievableBase):
@@ -439,7 +458,7 @@ class PressureScenario(_NonRetrievableBase):
     rule_under_test: str
     difficulty: str
 
-    _validate_scenario_id = field_validator("scenario_id")(_validate_node_id("scenario_id"))
+    _validate_scenario_id = field_validator("scenario_id")(_validate_node_id("scenario_id", "PSC-"))
 
 
 class WorkedExample(_NonRetrievableBase):
@@ -450,7 +469,7 @@ class WorkedExample(_NonRetrievableBase):
     result: str
     linked_skill: str
 
-    _validate_example_id = field_validator("example_id")(_validate_node_id("example_id"))
+    _validate_example_id = field_validator("example_id")(_validate_node_id("example_id", "EXM-"))
 
 
 class SubagentRole(_NonRetrievableBase):
@@ -462,7 +481,7 @@ class SubagentRole(_NonRetrievableBase):
     tools: str | None = None
     description: str | None = None
 
-    _validate_role_id = field_validator("role_id")(_validate_node_id("role_id"))
+    _validate_role_id = field_validator("role_id")(_validate_node_id("role_id", "ROL-"))
 
 
 # --- New edge types per plan Section 3.1 ---
