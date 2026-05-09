@@ -461,6 +461,25 @@ async def session_advance_phase(session_id: str, body: dict | None = None) -> di
     except Exception:
         pass
 
+    # Phase 6i: emit a parallel playbook_step_complete event so
+    # Phase 5's --playbook-compliance analyzer has signal. Each
+    # workflow phase advance IS a step in the SDD playbook.
+    _PHASE_ORDER = ["planning", "testing", "implementation", "complete"]
+    try:
+        step_index = _PHASE_ORDER.index(result["phase"])
+    except ValueError:
+        step_index = -1
+    if step_index >= 0:
+        log_friction_event(
+            session_id=session_id,
+            mode=None,
+            event="playbook_step_complete",
+            playbook_id="PBK-PROC-SDD-001",
+            step_id=result["phase"],
+            step_index=step_index,
+            total_steps=len(_PHASE_ORDER),
+        )
+
     return {"phase": result["phase"], "confirmation_source": source}
 
 
