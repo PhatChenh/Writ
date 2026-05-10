@@ -32,13 +32,15 @@ BIBLE_METHODOLOGY = WRIT_ROOT / "bible" / "methodology"
 OLD_FIXTURE_PATH = WRIT_ROOT / "tests" / "fixtures" / "synthetic_methodology"
 
 
-# Per-prefix counts captured pre-rename via:
-#   for prefix in PBK SKL ANT ROL FRB PHA RAT PSC EXM ENF META TEC; do
-#     ls ${prefix}-*.md | wc -l
-#   done
+# Per-prefix counts. Originally captured pre-rename for Phase 6e/6f/6g
+# promotion verification. Updated 2026-05-09 for the post-methodology-
+# absorption additions: SKL-PROC-WORKTREE-001 (item 1 of the post-PSR-008
+# methodology-gap closure) and PBK-AUTHOR-001 (skill-authoring playbook).
+# When you add a new methodology file in this corpus, bump the
+# corresponding count here so the snapshot stays honest.
 EXPECTED_FILE_COUNTS = {
-    "PBK": 7,   # Playbooks
-    "SKL": 7,   # Skills
+    "PBK": 8,   # Playbooks (+1: PBK-AUTHOR-001 added 2026-05-09)
+    "SKL": 8,   # Skills (+1: SKL-PROC-WORKTREE-001 added 2026-05-09)
     "ANT": 10,  # AntiPatterns
     "ROL": 3,   # SubagentRoles
     "FRB": 2,   # ForbiddenResponses

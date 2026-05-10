@@ -145,6 +145,196 @@ def analyze_friction(
     typer.echo(format_report(summary))
 
 
+@app.command(name="audit-session")
+def audit_session(
+    session_id: str = typer.Argument(..., help="The session id to audit."),
+    log: Path = typer.Option(
+        Path("workflow-friction.log"),
+        help="Path to the friction log. Defaults to ./workflow-friction.log.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON instead of text."),
+) -> None:
+    """Per-session timeline + summary from workflow-friction.log.
+
+    Filters the friction log to one session_id and presents:
+      - Phase progression (planning -> testing -> implementation -> complete)
+      - Mode + orchestrator state
+      - Rule / skill / playbook loads with counts
+      - Gate denials with the offending rule_id
+      - Subagent dispatches
+      - Always-on bundle injections
+      - Token consumption breakdown by query_source
+
+    The richer counterpart to methodology' Skill(X) tool-call transcript
+    visibility -- structured, filterable, persists across compactions.
+    """
+    import json as _json
+    from collections import Counter
+
+    from writ.analysis.friction import load_events
+
+    events = load_events(log)
+    session_events = [e for e in events if e.get("session") == session_id]
+
+    if not session_events:
+        if json_output:
+            typer.echo(_json.dumps({
+                "session": session_id,
+                "event_count": 0,
+                "message": "no events found for this session",
+            }))
+        else:
+            typer.echo(f"No events found for session {session_id} in {log}.")
+        return
+
+    # Aggregate signals.
+    event_counts: Counter[str] = Counter()
+    phase_transitions: list[dict] = []
+    rule_loads: Counter[str] = Counter()
+    skill_loads: Counter[str] = Counter()
+    playbook_loads: Counter[str] = Counter()
+    gate_denials: list[dict] = []
+    subagents: list[dict] = []
+    tokens_by_source: Counter[str] = Counter()
+    always_on_injects = 0
+    always_on_tokens = 0
+    playbook_completions: list[dict] = []
+    mode_changes: list[dict] = []
+
+    for e in session_events:
+        ev = e.get("event", "?")
+        event_counts[ev] += 1
+
+        if ev == "phase_advance":
+            phase_transitions.append({
+                "ts": e.get("ts"),
+                "from": e.get("from_phase"),
+                "to": e.get("to_phase"),
+                "source": e.get("confirmation_source"),
+            })
+        elif ev == "rag_query":
+            qs = e.get("query_source") or "unknown"
+            tokens_by_source[qs] += int(e.get("tokens_injected") or 0)
+            for rid in (e.get("rule_ids") or []):
+                if isinstance(rid, str):
+                    rule_loads[rid] += 1
+                    if rid.startswith("SKL-"):
+                        skill_loads[rid] += 1
+                    elif rid.startswith("PBK-"):
+                        playbook_loads[rid] += 1
+        elif ev == "always_on_inject":
+            always_on_injects += 1
+            always_on_tokens += int(e.get("tokens") or 0)
+        elif ev == "gate_denial":
+            gate_denials.append({
+                "ts": e.get("ts"),
+                "rule_id": e.get("rule_id"),
+            })
+        elif ev in ("subagent_start", "subagent_complete"):
+            subagents.append({
+                "ts": e.get("ts"),
+                "kind": ev,
+                "type": e.get("subagent_type"),
+            })
+        elif ev == "playbook_step_complete":
+            playbook_completions.append({
+                "ts": e.get("ts"),
+                "playbook_id": e.get("playbook_id"),
+                "step_id": e.get("step_id"),
+                "step_index": e.get("step_index"),
+                "total_steps": e.get("total_steps"),
+            })
+        elif ev == "mode_change":
+            mode_changes.append({
+                "ts": e.get("ts"),
+                "from": e.get("from_mode"),
+                "to": e.get("to_mode"),
+            })
+
+    if json_output:
+        typer.echo(_json.dumps({
+            "session": session_id,
+            "event_count": len(session_events),
+            "first_ts": session_events[0].get("ts"),
+            "last_ts": session_events[-1].get("ts"),
+            "event_counts": dict(event_counts),
+            "phase_transitions": phase_transitions,
+            "mode_changes": mode_changes,
+            "rule_loads": dict(rule_loads.most_common()),
+            "skill_loads": dict(skill_loads.most_common()),
+            "playbook_loads": dict(playbook_loads.most_common()),
+            "gate_denials": gate_denials,
+            "subagents": subagents,
+            "playbook_completions": playbook_completions,
+            "always_on_injects": always_on_injects,
+            "always_on_tokens": always_on_tokens,
+            "tokens_by_source": dict(tokens_by_source),
+        }, indent=2))
+        return
+
+    # Text format.
+    out: list[str] = []
+    out.append(f"=== Session audit: {session_id} ===")
+    out.append(f"Events: {len(session_events)} "
+               f"(first={session_events[0].get('ts')}, last={session_events[-1].get('ts')})")
+
+    if mode_changes:
+        out.append("")
+        out.append("Mode changes:")
+        for m in mode_changes:
+            out.append(f"  {m['ts']}  {m['from']} -> {m['to']}")
+
+    if phase_transitions:
+        out.append("")
+        out.append("Phase progression:")
+        for p in phase_transitions:
+            out.append(f"  {p['ts']}  {p['from']} -> {p['to']}  ({p['source']})")
+
+    out.append("")
+    out.append("Tokens injected by source:")
+    if always_on_injects:
+        out.append(f"  always_on        {always_on_tokens:>6}  ({always_on_injects} injects)")
+    for src, tok in tokens_by_source.most_common():
+        out.append(f"  {src:<16} {tok:>6}")
+
+    if skill_loads:
+        out.append("")
+        out.append("Skill loads:")
+        for sid, n in skill_loads.most_common():
+            out.append(f"  {sid:<32} {n}")
+
+    if playbook_loads:
+        out.append("")
+        out.append("Playbook loads:")
+        for pid, n in playbook_loads.most_common():
+            out.append(f"  {pid:<32} {n}")
+
+    if gate_denials:
+        out.append("")
+        out.append(f"Gate denials: {len(gate_denials)}")
+        for g in gate_denials:
+            out.append(f"  {g['ts']}  denied: {g['rule_id']}")
+
+    if subagents:
+        out.append("")
+        out.append("Subagent dispatches:")
+        for s in subagents:
+            out.append(f"  {s['ts']}  {s['kind']:<18} {s['type']}")
+
+    if playbook_completions:
+        out.append("")
+        out.append("Playbook step completions:")
+        for c in playbook_completions:
+            out.append(f"  {c['ts']}  {c['playbook_id']} step {c['step_index']}/{c['total_steps']} ({c['step_id']})")
+
+    out.append("")
+    out.append("Top event types:")
+    for ev, n in event_counts.most_common(10):
+        out.append(f"  {ev:<28} {n}")
+
+    typer.echo("\n".join(out))
+
+
 @app.command()
 def serve(
     port: int = typer.Option(DEFAULT_PORT, help="Port to bind the service to."),
