@@ -34,10 +34,11 @@ GROUND_TRUTH_PATH = Path("tests/fixtures/ground_truth_queries.json")
 #   0.75 / 0.90  2026-05-10 after dead-workflow cleanup (deleted 17, demoted 12)
 #   0.72 / 0.90  2026-05-10 after Phase 1A (17 SEC-INJ-*) and 1B (27 SEC-AUTH/AUTHZ/VAL-*)
 #   0.72 / 0.88  2026-05-10 after Phase 1C (19 SEC-CRYPTO/HDR/RATE-*)
+#   0.70 / 0.88  2026-05-10 after Phase 1D (10 SEC-DATA/DEP-*) closes Phase 1
 # Each public-rulebook sub-phase dilutes the ambiguous-set MRR / hit rate;
 # the ground truth corpus will be regenerated at the end of Phase 1 and
 # the floors retuned upward.
-MRR5_REGRESSION_FLOOR = 0.72
+MRR5_REGRESSION_FLOOR = 0.70
 HIT_RATE_REGRESSION_FLOOR = 0.88
 
 

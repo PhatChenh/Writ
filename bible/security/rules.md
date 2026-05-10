@@ -1063,6 +1063,389 @@ TLS 1.0 and 1.1 carry known weaknesses (BEAST, POODLE, weak MACs). Modern server
 <!-- RULE END: SEC-CRYPTO-TLS-001 -->
 ---
 
+<!-- RULE START: SEC-DATA-ENCRYPT-001 -->
+## Rule SEC-DATA-ENCRYPT-001
+
+**Domain**: security
+**Severity**: High
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When storing sensitive data: government IDs, financial account numbers, health records, credentials, biometric data, encryption keys, recovery codes.
+
+### Statement
+Sensitive data must be encrypted at rest. Acceptable mechanisms: database-level transparent encryption (TDE), field-level encryption with a KMS-managed key, application-level encryption with envelope-encrypted keys. Storing such data in plaintext columns is a violation.
+
+### Violation
+```python
+class User(Base):
+    ssn = Column(String)  # plaintext
+    health_record = Column(JSON)  # plaintext
+```
+
+### Pass
+```python
+class User(Base):
+    ssn_encrypted = Column(EncryptedString(key=kms.get_key('pii')))
+    health_record_encrypted = Column(EncryptedJSON(key=kms.get_key('phi')))
+```
+
+### Enforcement
+Schema review. Database-level encryption (PostgreSQL pgcrypto, MySQL transparent encryption) verifies at the platform layer.
+
+### Rationale
+Database leaks are the highest-impact security event a service can suffer: a single backup snapshot reveals every user's data. Field-level encryption raises the bar so that a leak yields ciphertext, not records.
+
+<!-- RULE END: SEC-DATA-ENCRYPT-001 -->
+---
+
+<!-- RULE START: SEC-DATA-EXPORT-001 -->
+## Rule SEC-DATA-EXPORT-001
+
+**Domain**: security
+**Severity**: Medium
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When implementing endpoints that return bulk data exports (CSV, JSON dump, ZIP archive, third-party data sync).
+
+### Statement
+Data export endpoints must implement access controls (the same authz as the underlying records, plus an explicit 'can-export' permission) and audit logging (who exported what, when). Per-request rate limits cap exfil volume.
+
+### Violation
+```python
+@app.get('/admin/users/export')
+@admin_required
+def export_users():
+    return csv_of(User.query.all())
+# No audit log; no rate limit; no per-record permission check.
+```
+
+### Pass
+```python
+@app.get('/admin/users/export')
+@admin_required
+@require_permission('users.export')
+@limiter.limit('1 per hour')
+def export_users():
+    audit_log.write('users-export', user=current_user, count=User.query.count())
+    return csv_of(User.query.all())
+```
+
+### Enforcement
+Code review.
+
+### Rationale
+Bulk-export endpoints are the highest-leverage exfiltration paths in a compromised account. Explicit permissions plus audit logging plus rate limits provide defense-in-depth.
+
+<!-- RULE END: SEC-DATA-EXPORT-001 -->
+---
+
+<!-- RULE START: SEC-DATA-MASK-001 -->
+## Rule SEC-DATA-MASK-001
+
+**Domain**: security
+**Severity**: Medium
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When error handlers, exception middleware, or stack-trace renderers may return error details to clients.
+
+### Statement
+Error responses must never expose internal paths, query text, schema details, library versions, stack traces, or env-var content to end users. Production handlers return a generic message with a correlation ID; the full detail goes to logs.
+
+### Violation
+```python
+@app.errorhandler(500)
+def handle_500(e):
+    return {'error': str(e), 'traceback': traceback.format_exc()}, 500
+```
+
+### Pass
+```python
+@app.errorhandler(500)
+def handle_500(e):
+    correlation_id = uuid.uuid4().hex
+    logger.exception('Unhandled error', extra={'correlation_id': correlation_id})
+    return {'error': 'Internal error', 'correlation_id': correlation_id}, 500
+```
+
+### Enforcement
+Framework config review (Flask DEBUG=False in prod, Django DEBUG=False, FastAPI custom exception_handlers, Express custom error middleware). E2E test that production error responses never include `traceback`, file paths, or SQL text.
+
+### Rationale
+Stack traces in HTTP responses leak file paths, library versions, and code structure that aid reconnaissance. Generic messages plus correlation IDs preserve debuggability without exposing internals.
+
+<!-- RULE END: SEC-DATA-MASK-001 -->
+---
+
+<!-- RULE START: SEC-DATA-PII-001 -->
+## Rule SEC-DATA-PII-001
+
+**Domain**: security
+**Severity**: Critical
+**Scope**: Component
+**Mandatory**: true
+**Mechanical_Enforcement_Path**: bin/run-analysis.sh::analyze_security_data_protection
+
+### Trigger
+When logging any value that may contain personally identifiable information: emails, phone numbers, addresses, SSNs, government IDs, credit-card numbers, dates of birth, full names paired with other identifiers.
+
+### Statement
+PII must never be written to plaintext logs. Either omit the value, hash it deterministically (for join-key utility), or redact to a token (`<redacted-email>`). The application is responsible for the redaction; relying on log-pipeline scrubbers downstream is a violation.
+
+### Violation
+```python
+logger.info('User signed up', extra={'email': user.email, 'phone': user.phone})
+```
+
+### Pass
+```python
+logger.info('User signed up', extra={
+    'user_id': user.id,
+    'email_hash': hash_pii(user.email),
+})
+```
+
+### Enforcement
+Mechanically enforced by bin/run-analysis.sh::analyze_security_data_protection: regex flags logger calls that pass identifiers matching email/phone/ssn/dob/address/credit_card/passport/license patterns. False positives accepted; reviewer confirms.
+
+### Rationale
+Logs are the most-replicated artifact a production system produces: they flow through stdout, CloudWatch, Splunk, S3, backups, devops laptops, and incident-response snapshots. PII in logs is functionally a permanent leak.
+
+<!-- RULE END: SEC-DATA-PII-001 -->
+---
+
+<!-- RULE START: SEC-DATA-PII-002 -->
+## Rule SEC-DATA-PII-002
+
+**Domain**: security
+**Severity**: High
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When designing API response shapes for endpoints that return user, account, or domain-entity data.
+
+### Statement
+API responses explicitly select which fields to include via a response schema or serializer. Returning the full entity (`return user`, `return model.to_dict()`) is a violation. The serializer enforces the field allowlist; fields the requester is not authorized to see are excluded at the data layer, not redacted in middleware.
+
+### Violation
+```python
+@app.get('/users/{user_id}')
+def get_user(user_id):
+    user = User.query.get(user_id)
+    return user.to_dict()  # ships password_hash, tokens, internal flags
+```
+
+### Pass
+```python
+class UserPublic(BaseModel):
+    id: int
+    name: str
+    avatar_url: str | None
+
+@app.get('/users/{user_id}')
+def get_user(user_id):
+    user = User.query.get(user_id)
+    return UserPublic.from_orm(user)
+```
+
+### Enforcement
+Code review. Look for `to_dict()`, `model_dump()`, `__dict__` returned directly from a handler. Pydantic + response_model parameter (FastAPI) makes the allowlist explicit and enforced.
+
+### Rationale
+Over-fetching is one of the most common privacy bugs: developers add a field for one consumer (admin UI) and forget the same response shape ships to every other consumer (public profile, mobile app, third-party integration). Explicit serializers contain the blast radius of new fields.
+
+<!-- RULE END: SEC-DATA-PII-002 -->
+---
+
+<!-- RULE START: SEC-DATA-RETAIN-001 -->
+## Rule SEC-DATA-RETAIN-001
+
+**Domain**: security
+**Severity**: Medium
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When designing schemas, batch jobs, or background processes that retain user data.
+
+### Statement
+Data retention must follow a documented policy with explicit lifetimes. Indefinite storage of user-generated content or analytics data requires a documented justification (legal obligation, contractual). A retention sweep job purges data past lifetime.
+
+### Violation
+```python
+# Audit log table grows forever; no retention sweep.
+# Search index keeps deleted records.
+```
+
+### Pass
+```python
+# audit_log: retained 90 days then purged.
+# search_index: synced from canonical store nightly; deletes propagate.
+```
+
+### Enforcement
+Schema review documenting retention per table. Audit job logs deletion counts.
+
+### Rationale
+Long-retained data is a long-running liability: a leak today exposes data from years past. A retention policy bounds the exposure window structurally.
+
+<!-- RULE END: SEC-DATA-RETAIN-001 -->
+---
+
+<!-- RULE START: SEC-DEP-AUDIT-001 -->
+## Rule SEC-DEP-AUDIT-001
+
+**Domain**: security
+**Severity**: High
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When adding, updating, or pinning a dependency in package.json, requirements.txt, pyproject.toml, Gemfile, composer.json, go.mod, Cargo.toml.
+
+### Statement
+No direct dependency may have a known critical-or-high-severity CVE. Acceptable mechanisms: npm audit, pip-audit, cargo audit, bundler-audit, composer audit, GitHub Dependabot, Snyk. The check runs in CI and gates merge.
+
+### Violation
+```
+# package.json carries lodash@4.17.4 with prototype-pollution CVE.
+```
+
+### Pass
+```
+# CI step:
+# npm audit --audit-level=high  -- exits 1 on critical/high
+```
+
+### Enforcement
+CI gate (npm audit, pip-audit, cargo audit). Dependabot/Renovate auto-PRs for vulnerable upgrades. Code review on bypass justifications.
+
+### Rationale
+Most exploited vulnerabilities in modern services are dependency CVEs (Log4Shell, Spring4Shell, prototype-pollution chains). The audit step is mechanical and prevents the regression.
+
+<!-- RULE END: SEC-DEP-AUDIT-001 -->
+---
+
+<!-- RULE START: SEC-DEP-LOCK-001 -->
+## Rule SEC-DEP-LOCK-001
+
+**Domain**: security
+**Severity**: Medium
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When the project has a package manager that supports lockfiles.
+
+### Statement
+Lockfiles (package-lock.json, yarn.lock, poetry.lock, Cargo.lock, Gemfile.lock, composer.lock) are committed and used for installs in CI and production. `npm install` without an existing lockfile, `pip install` without `--require-hashes`, or production builds that resolve loose versions are violations.
+
+### Violation
+```
+# .gitignore contains package-lock.json; every install resolves
+# differently; supply-chain attacks have one fewer barrier.
+```
+
+### Pass
+```
+# package-lock.json committed; CI runs `npm ci` (not `npm install`).
+# pip: requirements.txt generated with `pip-compile --generate-hashes`.
+```
+
+### Enforcement
+CI/build config review.
+
+### Rationale
+Lockfiles make installs deterministic: identical inputs produce identical outputs. A typosquat or compromised version published mid-window cannot enter the build without an explicit lockfile update.
+
+<!-- RULE END: SEC-DEP-LOCK-001 -->
+---
+
+<!-- RULE START: SEC-DEP-PIN-001 -->
+## Rule SEC-DEP-PIN-001
+
+**Domain**: security
+**Severity**: Medium
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When declaring dependency versions in manifest files.
+
+### Statement
+Dependencies are pinned to an exact version or a narrow range (`~1.2.3`, `>=1.2,<1.3`), not open-ended (`*`, `^1.0.0` on critical libs, `latest`). Lockfiles capture exact resolution; manifests bound which resolutions are acceptable.
+
+### Violation
+```json
+{
+  "dependencies": {
+    "left-pad": "*",
+    "jsonwebtoken": "latest"
+  }
+}
+```
+
+### Pass
+```json
+{
+  "dependencies": {
+    "left-pad": "~1.3.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
+```
+
+### Enforcement
+Manifest review.
+
+### Rationale
+Open-ended versions silently take new releases on every install, which has historically included malicious or breaking changes. Narrow ranges plus a lockfile bound the surprise.
+
+<!-- RULE END: SEC-DEP-PIN-001 -->
+---
+
+<!-- RULE START: SEC-DEP-REVIEW-001 -->
+## Rule SEC-DEP-REVIEW-001
+
+**Domain**: security
+**Severity**: Low
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When opening a pull request that adds a new dependency to a manifest file.
+
+### Statement
+New dependency additions are documented in the PR description: what library, what it does, why this one over alternatives, license, maintainer activity (commits in last 6 months, weekly downloads). A reviewer signs off on the addition specifically.
+
+### Violation
+```
+# PR diff adds `left-pad@^1.3.0`. PR description: "misc changes".
+```
+
+### Pass
+```
+# PR description includes:
+# - New dep: left-pad@^1.3.0 (MIT). Used to format ledger output.
+# - Considered: native String#padStart (rejected: target Node < 8).
+# - Repo activity: last commit 2 months ago, 600k weekly downloads.
+```
+
+### Enforcement
+PR template + reviewer checklist. CODEOWNERS for manifest files routes adds to security-aware reviewers.
+
+### Rationale
+Adding a dependency is a long-term commitment to a third party's security posture. The review forces a deliberate choice and creates an artifact for incident response when the dep is later compromised.
+
+<!-- RULE END: SEC-DEP-REVIEW-001 -->
+---
+
 <!-- RULE START: SEC-HDR-CORS-001 -->
 ## Rule SEC-HDR-CORS-001
 

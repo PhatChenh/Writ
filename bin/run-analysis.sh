@@ -753,6 +753,74 @@ for line_no, line in enumerate(lines, start=1):
 PYEOF
 }
 
+# ── Security data-protection scan (cross-language) ───────────────────────────
+# Phase 1D 2026-05-10. Detects PII passed to logger calls (SEC-DATA-PII-001).
+# Heuristic: flag logger calls that reference PII-shaped identifiers.
+# False positives accepted; reviewer judgment closes the gap.
+analyze_security_data_protection() {
+  local file="$1"
+  local lang="$2"
+
+  python3 - <<'PYEOF' "$file" "$lang"
+import json, os, re, sys
+file_path = sys.argv[1]
+lang = sys.argv[2]
+basename = os.path.basename(file_path)
+if basename.startswith("seed_") and basename.endswith(".py"):
+    sys.exit(0)
+try:
+    with open(file_path, encoding="utf-8", errors="replace") as f:
+        src = f.read()
+except OSError:
+    sys.exit(0)
+
+lines = src.splitlines()
+
+def emit(line_no, rule, tool, message, severity="error"):
+    print(json.dumps({
+        "file": file_path,
+        "line": line_no,
+        "severity": severity,
+        "rule": rule,
+        "tool": "writ-data-scan/" + tool,
+        "message": message,
+    }))
+
+# Logger call shapes across languages.
+LOGGER_CALL = re.compile(
+    r"\b(?:logger|logging|log|console|Log)\.(?:debug|info|warn(?:ing)?|error|fatal|trace|exception)\s*\("
+    r"|\bprint\s*\("
+    r"|\bSystem\.out\.println\s*\("
+    r"|\berror_log\s*\("
+)
+# PII-shaped identifiers / keys.
+PII_IDENT = re.compile(
+    r"\b(?:e?mail(?:_?address)?|phone(?:_?number)?|ssn|sin|nin|social_?security|"
+    r"dob|date_?of_?birth|street_?address|home_?address|"
+    r"credit_?card(?:_?number)?|cc_?number|card_?pan|cvv|"
+    r"passport(?:_?number)?|drivers_?license|tax_?id|national_?id)\b",
+    re.IGNORECASE,
+)
+# Allowlist: hashed/redacted/masked variants are safe.
+SAFE_SUFFIX = re.compile(r"_(hash|hashed|digest|redacted|masked|fingerprint|token)\b", re.IGNORECASE)
+
+for line_no, line in enumerate(lines, start=1):
+    stripped = line.lstrip()
+    if stripped.startswith(("#", "//", "*")):
+        continue
+    if LOGGER_CALL.search(line):
+        for m in PII_IDENT.finditer(line):
+            start = m.start()
+            tail = line[start: start + 60]
+            if SAFE_SUFFIX.search(tail):
+                continue
+            emit(line_no, "SEC-DATA-PII-001", "pii-in-log",
+                 f"Logger call references PII identifier '{m.group(0)}': redact, hash, or omit before logging",
+                 "error")
+            break  # one finding per line
+PYEOF
+}
+
 # ── Main loop ────────────────────────────────────────────────────────────────
 ALL_FINDINGS=""
 HAS_ERRORS=0
@@ -817,6 +885,16 @@ print(json.dumps({
   if [ -n "$crypto_result" ]; then
     ALL_FINDINGS="${ALL_FINDINGS}${crypto_result}"$'\n'
     if echo "$crypto_result" | grep -q '"severity": "error"'; then
+      HAS_ERRORS=1
+    fi
+  fi
+
+  # Cross-language data-protection scan (SEC-DATA-PII-001 from the public
+  # rulebook, Phase 1D 2026-05-10).
+  data_result=$(analyze_security_data_protection "$file" "$lang")
+  if [ -n "$data_result" ]; then
+    ALL_FINDINGS="${ALL_FINDINGS}${data_result}"$'\n'
+    if echo "$data_result" | grep -q '"severity": "error"'; then
       HAS_ERRORS=1
     fi
   fi
