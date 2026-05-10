@@ -5,6 +5,7 @@
 **Severity**: High
 **Scope**: Task
 **Mandatory**: false
+**Mechanical_Enforcement_Path**: writ/authoring.py: lint on add/edit warns if trigger contains action verbs rather than trigger conditions.
 
 ### Trigger
 When the agent authors a new Writ Skill, Playbook, or Technique node, and is about to populate the trigger or description field.
@@ -34,6 +35,7 @@ At scale (>30 skills), agent-side selection of which skill to use becomes the bo
 **Severity**: High
 **Scope**: Task
 **Mandatory**: false
+**Mechanical_Enforcement_Path**: writ/authoring.py: warn on add/edit if node lacks linked PressureScenario.
 
 ### Trigger
 When the agent authors a new Writ Skill, Playbook, or Technique and is about to mark it ready for use without running a pressure test against the rule's target behavior.

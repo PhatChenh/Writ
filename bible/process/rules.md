@@ -64,7 +64,7 @@ Symptom-patching is the canonical debug-mode failure. Forcing evidence-cite disc
 **Severity**: High
 **Scope**: Task
 **Mandatory**: true
-**Mechanical_Enforcement_Path**: .claude/hooks/validate-exit-plan.sh + .claude/hooks/writ-quality-judge.sh
+**Mechanical_Enforcement_Path**: .claude/hooks/validate-exit-plan.sh (Tier 1) + writ-quality-judge.sh (Tier 2)
 
 ### Trigger
 When a plan.md artifact is written and contains placeholder content (TBD, TODO, 'similar to N') or fails structural quality gate.
@@ -79,7 +79,7 @@ plan.md contains 'Step 5: implement appropriate error handling, similar to Step 
 plan.md Step 5: 'In src/api.py line 42, wrap the fetch() call in try/except OrderNotFoundError, log the error with order_id context, re-raise.' Concrete path, concrete change, concrete reasoning. Gate passes.
 
 ### Enforcement
-Gate 5 Tier 1 via validate-exit-plan.sh: lexical match against placeholder blocklist (TBD, TODO, fill in, appropriate, similar to, as needed, placeholder).
+Gate 5 Tier 1 via validate-exit-plan.sh: lexical match against placeholder blocklist (TBD, TODO, fill in, appropriate, similar to, as needed, placeholder). Gate 5 Tier 2 via Haiku judge rubric on PostToolUse for semantic-level boilerplate.
 
 ### Rationale
 Placeholder plans transfer design decisions to the implementer as interpretation. They are the canonical failure mode of AI-generated planning.

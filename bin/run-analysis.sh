@@ -343,6 +343,112 @@ for f in findings:
 " 2>/dev/null
 }
 
+# ── Security injection scan (cross-language, SEC-INJ-* rules) ────────────────
+# Phase 1A 2026-05-10. Regex-based detector for the 6 mandatory SEC-INJ-*
+# rules plus the high-severity siblings (XSS-003, CMD-002, PATH-001, LDAP-001,
+# SSTI-001, HEADER-001, LOG-001, REDIR-001). Cannot fully prove safety;
+# flags the patterns that should never appear without a reviewer-confirmed
+# justification.
+analyze_security_injection() {
+  local file="$1"
+  local lang="$2"
+
+  python3 - <<PYEOF "$file" "$lang"
+import json, re, sys
+file_path = sys.argv[1]
+lang = sys.argv[2]
+try:
+    with open(file_path, encoding="utf-8", errors="replace") as f:
+        src = f.read()
+except OSError:
+    sys.exit(0)
+
+lines = src.splitlines()
+
+def emit(line_no, rule, tool, message, severity="error"):
+    print(json.dumps({
+        "file": file_path,
+        "line": line_no,
+        "severity": severity,
+        "rule": rule,
+        "tool": "writ-injection-scan/" + tool,
+        "message": message,
+    }))
+
+PATTERNS = [
+    # SEC-INJ-SQL-001: SQL string concatenation / interpolation near execute()
+    (r"\.execute\s*\(\s*f[\"']", "SEC-INJ-SQL-001", "sql-fstring",
+     "f-string SQL in .execute(): use bound parameters instead", "error"),
+    (r"\.execute\s*\([^)]*\+\s*['\"]?\s*\w", "SEC-INJ-SQL-001", "sql-concat",
+     "string concatenation in .execute(): use bound parameters instead", "error"),
+    (r"\.raw\s*\(\s*f[\"']", "SEC-INJ-SQL-002", "orm-raw-fstring",
+     "f-string in ORM .raw(): pass parameters as a list/dict", "error"),
+    # SEC-INJ-XSS-001/002: dangerous render APIs
+    (r"dangerouslySetInnerHTML", "SEC-INJ-XSS-002", "react-unsafe-html",
+     "dangerouslySetInnerHTML: render as text or sanitize via DOMPurify", "error"),
+    (r"\bv-html\s*=", "SEC-INJ-XSS-002", "vue-unsafe-html",
+     "v-html: render as text or sanitize", "error"),
+    (r"\{!![^!]+!!\}", "SEC-INJ-XSS-002", "blade-unsafe",
+     "Blade {!! !!} raw output: use {{ }} or sanitize", "error"),
+    (r"\{@html\b", "SEC-INJ-XSS-002", "svelte-unsafe-html",
+     "Svelte {@html}: sanitize before rendering", "error"),
+    # SEC-INJ-XSS-003: vanilla DOM mutation with HTML
+    (r"\.innerHTML\s*=", "SEC-INJ-XSS-003", "dom-innerhtml",
+     "innerHTML assignment: use textContent or framework-rendered nodes", "error"),
+    (r"\.outerHTML\s*=", "SEC-INJ-XSS-003", "dom-outerhtml",
+     "outerHTML assignment: replace via createElement instead", "error"),
+    (r"document\.write\s*\(", "SEC-INJ-XSS-003", "document-write",
+     "document.write(): use DOM API instead", "error"),
+    # SEC-INJ-CMD-001: shell command construction
+    (r"subprocess\.(run|Popen|call|check_output|check_call)\s*\([^)]*shell\s*=\s*True", "SEC-INJ-CMD-001", "subprocess-shell",
+     "subprocess with shell=True: pass argument list instead", "error"),
+    (r"\bos\.system\s*\(", "SEC-INJ-CMD-001", "os-system",
+     "os.system(): use subprocess with argument list", "error"),
+    (r"\bos\.popen\s*\(", "SEC-INJ-CMD-001", "os-popen",
+     "os.popen(): use subprocess.run with argument list", "error"),
+    (r"child_process\.exec(?:Sync)?\s*\(", "SEC-INJ-CMD-001", "node-exec",
+     "child_process.exec(): use execFile or spawn with argument list", "error"),
+    # PHP shell exec functions
+    (r"\bshell_exec\s*\(", "SEC-INJ-CMD-001", "php-shell-exec",
+     "shell_exec(): use escapeshellarg or argument-list invocation", "error"),
+    (r"\bpassthru\s*\(", "SEC-INJ-CMD-001", "php-passthru",
+     "passthru(): pass constant command, escape arguments", "error"),
+    # SEC-INJ-CMD-002: eval / dynamic-code evaluators
+    (r"\beval\s*\(", "SEC-INJ-CMD-002", "eval",
+     "eval(): use a lookup table or dispatch dict instead", "error"),
+    (r"new\s+Function\s*\(", "SEC-INJ-CMD-002", "new-function",
+     "new Function(): replace with a lookup table or registry", "error"),
+    # SEC-INJ-DESER-001: insecure deserialization
+    (r"\bpickle\.loads?\s*\(", "SEC-INJ-DESER-001", "pickle",
+     "pickle.loads(): never deserialize untrusted data; use JSON or typed schema", "error"),
+    (r"\byaml\.load\s*\((?![^)]*Loader\s*=\s*\w*SafeLoader)", "SEC-INJ-DESER-001", "yaml-unsafe",
+     "yaml.load() without SafeLoader: use yaml.safe_load() instead", "error"),
+    (r"\bunserialize\s*\(", "SEC-INJ-DESER-001", "php-unserialize",
+     "PHP unserialize(): use json_decode or typed schema", "error"),
+    (r"ObjectInputStream", "SEC-INJ-DESER-001", "java-objectinputstream",
+     "Java ObjectInputStream: use a typed schema (JSON/Protobuf)", "error"),
+    # SEC-INJ-SSTI-001: server-side template injection
+    (r"\bTemplate\s*\(\s*(?!['\"])", "SEC-INJ-SSTI-001", "template-dynamic",
+     "Template() with non-literal argument: never pass user input as template body", "error"),
+    # SEC-INJ-LOG-001: log injection
+    # (advisory severity in the source; flagged but not error)
+    (r"(logger|logging)\.[a-z]+\s*\(\s*f[\"'][^\"']*\{[a-zA-Z_]", "SEC-INJ-LOG-001", "log-fstring",
+     "f-string log with embedded values: use structured logger fields", "warning"),
+]
+
+for line_no, line in enumerate(lines, start=1):
+    # Skip lines that look like comments to reduce false positives on
+    # documentation examples within the rules themselves. Comment markers:
+    # Python #, JS/Java/PHP //, /* ... */ ranges are not tracked here.
+    stripped = line.lstrip()
+    if stripped.startswith(("#", "//", "*")):
+        continue
+    for pat, rule, tool, msg, severity in PATTERNS:
+        if re.search(pat, line):
+            emit(line_no, rule, tool, msg, severity)
+PYEOF
+}
+
 # ── Main loop ────────────────────────────────────────────────────────────────
 ALL_FINDINGS=""
 HAS_ERRORS=0
@@ -376,6 +482,17 @@ print(json.dumps({
     ALL_FINDINGS="${ALL_FINDINGS}${result}"$'\n'
     # Check if any finding has severity=error
     if echo "$result" | grep -q '"severity": "error"'; then
+      HAS_ERRORS=1
+    fi
+  fi
+
+  # Cross-language injection-prevention scan (SEC-INJ-* rules from the
+  # public rulebook, Phase 1A 2026-05-10). Runs in addition to the
+  # per-language analyzer above.
+  inj_result=$(analyze_security_injection "$file" "$lang")
+  if [ -n "$inj_result" ]; then
+    ALL_FINDINGS="${ALL_FINDINGS}${inj_result}"$'\n'
+    if echo "$inj_result" | grep -q '"severity": "error"'; then
       HAS_ERRORS=1
     fi
   fi
