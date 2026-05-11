@@ -48,16 +48,44 @@ def _collect_all_registrations(hooks_data: dict) -> list[dict]:
 
 
 def _collect_all_commands(hooks_data: dict) -> list[str]:
-    """Extract all command strings from every registration entry."""
+    """Extract all command strings from every registration entry.
+
+    The standard Claude Code hooks schema nests commands under each matcher
+    entry's ``hooks`` array: ``{matcher, hooks: [{type, command}]}``. This
+    helper flattens that structure into a list of command strings.
+    """
     commands = []
     hooks_section = hooks_data.get("hooks", hooks_data)
     for event_entries in hooks_section.values():
         if isinstance(event_entries, list):
             for entry in event_entries:
-                if isinstance(entry, dict) and "command" in entry:
-                    commands.append(entry["command"])
+                if isinstance(entry, dict):
+                    if "command" in entry:
+                        commands.append(entry["command"])
+                    inner_hooks = entry.get("hooks")
+                    if isinstance(inner_hooks, list):
+                        for inner in inner_hooks:
+                            if isinstance(inner, dict) and "command" in inner:
+                                commands.append(inner["command"])
                 elif isinstance(entry, str):
                     commands.append(entry)
+    return commands
+
+
+def _collect_event_commands(event_entries: list) -> list[str]:
+    """Extract all command strings registered under a single event."""
+    commands: list[str] = []
+    for entry in event_entries:
+        if isinstance(entry, dict):
+            if "command" in entry:
+                commands.append(entry["command"])
+            inner_hooks = entry.get("hooks")
+            if isinstance(inner_hooks, list):
+                for inner in inner_hooks:
+                    if isinstance(inner, dict) and "command" in inner:
+                        commands.append(inner["command"])
+        elif isinstance(entry, str):
+            commands.append(entry)
     return commands
 
 
@@ -99,10 +127,7 @@ class TestHooksJsonStructure:
                 f"hooks.json must have an entry for event '{event}'"
             )
             event_entries = hooks_section[event]
-            all_commands = " ".join(
-                entry.get("command", "") if isinstance(entry, dict) else str(entry)
-                for entry in event_entries
-            )
+            all_commands = " ".join(_collect_event_commands(event_entries))
             for script in expected_scripts:
                 assert script in all_commands, (
                     f"Event '{event}' must reference script '{script}'"
@@ -138,10 +163,7 @@ class TestHooksJsonPhaseC:
         if "SessionStart" not in hooks_section:
             pytest.skip("Phase C: SessionStart entry not yet added to hooks.json")
         entries = hooks_section["SessionStart"]
-        all_commands = " ".join(
-            entry.get("command", "") if isinstance(entry, dict) else str(entry)
-            for entry in entries
-        )
+        all_commands = " ".join(_collect_event_commands(entries))
         assert "session-start-bootstrap.sh" in all_commands, (
             "SessionStart event must reference session-start-bootstrap.sh"
         )

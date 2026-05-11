@@ -1,4 +1,5 @@
 {
+  "_comment": "Legacy install template used by scripts/install-harness-config.sh for standalone-skill installs at ~/.claude/skills/writ/. Plugin installs read hooks from hooks/hooks.json instead. Keep registrations in sync between the two until the standalone path is sunset. See templates/settings.README.md.",
   "cleanupPeriodDays": 365,
   "permissions": {
     "allow": [

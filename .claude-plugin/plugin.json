@@ -10,5 +10,9 @@
   "homepage": "https://github.com/infinri/Writ",
   "repository": "https://github.com/infinri/Writ",
   "license": "MIT",
-  "keywords": ["claude-code", "rag", "rules", "enforcement", "neo4j", "fastapi", "hooks", "workflow"]
+  "keywords": ["claude-code", "rag", "rules", "enforcement", "neo4j", "fastapi", "hooks", "workflow"],
+  "skills": ["./"],
+  "commands": "./.claude/commands",
+  "agents": "./.claude/agents",
+  "hooks": "./hooks/hooks.json"
 }
