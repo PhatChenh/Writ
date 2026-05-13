@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from tests.fixtures.regression_floors import HIT_RATE_FLOOR, MRR5_FLOOR
 from writ.graph.db import Neo4jConnection
 from writ.graph.ingest import validate_parsed_rule
 from writ.graph.integrity import IntegrityChecker
@@ -47,8 +48,9 @@ COLD_START_BUDGET_S = 3.0
 MEMORY_BUDGET_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 INTEGRITY_BUDGET_MS = 500.0
 INGESTION_BUDGET_S = 2.0
-MRR5_THRESHOLD = 0.75  # Pre-2026-05-10 was 0.78. Lowered after the dead-workflow rule cleanup deleted 17 rules and demoted 12; will be retuned upward after the public rulebook expansion (Phase 1+).
-HIT_RATE_THRESHOLD = 0.90
+# MRR@5 ambiguous-set floor and hit-rate floor live in
+# tests/fixtures/regression_floors.py (single source of truth shared
+# with tests/test_graph_proximity.py).
 BM25_BUDGET_MS = 2.0
 VECTOR_BUDGET_MS = 3.0
 CACHE_BUDGET_MS = 3.0
@@ -235,7 +237,7 @@ class TestRetrievalPrecision:
 
         mrr5 = sum(reciprocal_ranks) / len(reciprocal_ranks)
         hits = sum(1 for rr in reciprocal_ranks if rr > 0)
-        print(f"\nMRR@5 (ambiguous, n={len(ambiguous)}): {mrr5:.4f} (threshold: {MRR5_THRESHOLD})")
+        print(f"\nMRR@5 (ambiguous, n={len(ambiguous)}): {mrr5:.4f} (floor: {MRR5_FLOOR})")
         print(f"  Hits in top 5: {hits}/{len(ambiguous)}")
 
         misses = [
@@ -244,8 +246,8 @@ class TestRetrievalPrecision:
         if misses:
             print(f"  Misses: {', '.join(misses)}")
 
-        assert mrr5 >= MRR5_THRESHOLD, (
-            f"MRR@5 {mrr5:.4f} below {MRR5_THRESHOLD} threshold. Misses: {misses}"
+        assert mrr5 >= MRR5_FLOOR, (
+            f"MRR@5 {mrr5:.4f} below {MRR5_FLOOR} floor. Misses: {misses}"
         )
 
     def test_hit_rate_all_queries(self, pipeline, ground_truth) -> None:
@@ -262,12 +264,12 @@ class TestRetrievalPrecision:
 
         total = len(ground_truth)
         hit_rate = hits / total
-        print(f"\nHit rate (all {total} queries): {hits}/{total} = {hit_rate:.2%} (threshold: {HIT_RATE_THRESHOLD:.0%})")
+        print(f"\nHit rate (all {total} queries): {hits}/{total} = {hit_rate:.2%} (floor: {HIT_RATE_FLOOR:.0%})")
         if misses:
             print(f"  Misses: {', '.join(misses)}")
 
-        assert hit_rate >= HIT_RATE_THRESHOLD, (
-            f"Hit rate {hit_rate:.2%} below {HIT_RATE_THRESHOLD:.0%}. Misses: {misses}"
+        assert hit_rate >= HIT_RATE_FLOOR, (
+            f"Hit rate {hit_rate:.2%} below floor {HIT_RATE_FLOOR:.0%}. Misses: {misses}"
         )
 
 

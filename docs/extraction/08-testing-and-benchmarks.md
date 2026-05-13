@@ -369,14 +369,14 @@ The suite lives in `benchmarks/` and consists of four files. Both `bench_targets
 
 Module-scoped async fixtures: `db` (`Neo4jConnection` to `bolt://localhost:7687`; skips if `count_rules() == 0`), `pipeline` (pre-warmed via `build_pipeline(db)`), `ground_truth` (loads `tests/fixtures/ground_truth_queries.json`).
 
-Constants (latency budgets unchanged; MRR/hit-rate thresholds were retuned during Phase 1-5 — see `tests/test_graph_proximity.py` for the current floors and trajectory):
+Constants (latency budgets unchanged; MRR/hit-rate floors were retuned during Phase 1-5 — see `tests/fixtures/regression_floors.py` for the canonical floors plus the full phase-by-phase trajectory docstring):
 - `LATENCY_P95_BUDGET_MS = 10.0`
 - `COLD_START_BUDGET_S = 3.0`
 - `MEMORY_BUDGET_BYTES = 2 GiB`
 - `INTEGRITY_BUDGET_MS = 500.0`
 - `INGESTION_BUDGET_S = 2.0`
-- `MRR5_REGRESSION_FLOOR = 0.45` (was 0.78; lowered across Phases 1A-3A as corpus grew 3.8x)
-- `HIT_RATE_REGRESSION_FLOOR = 0.75` (was 0.90; lowered across Phases 1A-3B)
+- `MRR5_FLOOR = 0.45` (was 0.78; lowered across Phases 1A-3A as corpus grew 3.8x; imported from `tests/fixtures/regression_floors.py`)
+- `HIT_RATE_FLOOR = 0.75` (was 0.90; lowered across Phases 1A-3B; imported from `tests/fixtures/regression_floors.py`)
 - `BM25_BUDGET_MS = 2.0`
 - `VECTOR_BUDGET_MS = 3.0`
 - `CACHE_BUDGET_MS = 3.0`

@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from tests.fixtures.regression_floors import HIT_RATE_FLOOR, MRR5_FLOOR
 from writ.graph.db import Neo4jConnection
 from writ.graph.ingest import discover_rule_files, parse_rules_from_file
 from writ.retrieval.pipeline import build_pipeline, compute_graph_proximity
@@ -28,39 +29,10 @@ NEO4J_PASSWORD = "writdevpass"
 
 GROUND_TRUTH_PATH = Path("tests/fixtures/ground_truth_queries.json")
 
-# Regression gates from EXECUTION_PLAN.md Phase 6 test checklist.
-# MRR + hit-rate floor history:
-#   0.78 / 0.90  baseline (Phase 5)
-#   0.75 / 0.90  2026-05-10 after dead-workflow cleanup (deleted 17, demoted 12)
-#   0.72 / 0.90  2026-05-10 after Phase 1A (17 SEC-INJ-*) and 1B (27 SEC-AUTH/AUTHZ/VAL-*)
-#   0.72 / 0.88  2026-05-10 after Phase 1C (19 SEC-CRYPTO/HDR/RATE-*)
-#   0.70 / 0.88  2026-05-10 after Phase 1D (10 SEC-DATA/DEP-*) closes Phase 1
-#   0.65 / 0.84  2026-05-10 after Phase 2A (33 CLEAN/DRY-*) -- ground-truth
-#                queries were rewritten to point at the renamed IDs but the
-#                expanded rule space still dilutes ambiguous-query MRR.
-#   0.55 / 0.80  2026-05-10 after Phase 2B (27 SOLID/ARCH-*) -- ground-truth
-#                rewritten for 3 more renames; the corpus is now ~2.7x its
-#                original size and the original 83 queries undersample the
-#                expanded space. Phase 6 will regenerate the corpus.
-#   0.50 / 0.80  2026-05-10 after Phase 3A (32 TEST/ERR-*) -- ground-truth
-#                rewritten for 2 more renames.
-#   0.50 / 0.78  2026-05-10 after Phase 3B (14 PERF-* with PERF-QUERY-001 mandatory).
-#   0.45 / 0.78  2026-05-10 after Phase 4 (30 SCALE/API/DOC-*) -- ARCH-TYPE-001
-#                renamed; no other ground-truth references affected.
-#   0.45 / 0.75  2026-05-10 Phase 6: ground-truth corpus expanded from 83
-#                to 165 queries by adding 82 keyword queries targeting the
-#                new public-rulebook rule IDs (mandatory + commonly-named
-#                advisories). Ambiguous-set unchanged (19 queries), so MRR
-#                floor unchanged. Hit-rate denominator grew but additional
-#                queries average slightly below the original set (BM25 +
-#                vector misses on some near-synonym matches), so hit-rate
-#                floor adjusted to 0.75 with margin.
-# Each public-rulebook sub-phase dilutes the ambiguous-set MRR / hit rate.
-# After full Phase 1-5 expansion (276 rules / 30 mandatory) and Phase 6
-# ground-truth refresh, floors stabilize at 0.45 / 0.75 against the
-# expanded corpus.
-MRR5_REGRESSION_FLOOR = 0.45
-HIT_RATE_REGRESSION_FLOOR = 0.75
+# Regression gates: MRR5_FLOOR and HIT_RATE_FLOOR live in
+# tests/fixtures/regression_floors.py. The phase-by-phase history of
+# how the floors walked down across Phases 1A-4 plus the Phase 6
+# ground-truth expansion is preserved as a docstring on that module.
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
@@ -281,8 +253,8 @@ class TestGraphBoostRegression:
                 reciprocal_ranks.append(0.0)
 
         mrr5 = sum(reciprocal_ranks) / len(reciprocal_ranks)
-        print(f"\nMRR@5 with graph boost (ambiguous): {mrr5:.4f} (floor: {MRR5_REGRESSION_FLOOR})")
-        assert mrr5 >= MRR5_REGRESSION_FLOOR
+        print(f"\nMRR@5 with graph boost (ambiguous): {mrr5:.4f} (floor: {MRR5_FLOOR})")
+        assert mrr5 >= MRR5_FLOOR
 
     def test_hit_rate_no_regression(self, pipeline_with_graph, ground_truth) -> None:
         """Hit rate >= 90% on all 83 queries after graph boost."""
@@ -295,7 +267,7 @@ class TestGraphBoostRegression:
 
         hit_rate = hits / len(ground_truth)
         print(f"\nHit rate with graph boost: {hits}/{len(ground_truth)} = {hit_rate:.2%}")
-        assert hit_rate >= HIT_RATE_REGRESSION_FLOOR
+        assert hit_rate >= HIT_RATE_FLOOR
 
     def test_benchmark_suite_still_passes(self, pipeline_with_graph) -> None:
         """End-to-end p95 stays under the warm-pipeline budget. Budget
