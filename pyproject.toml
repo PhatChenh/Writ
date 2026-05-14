@@ -44,6 +44,15 @@ dependencies = [
     "pydantic>=2.9,<3",
     "typer>=0.13,<1",
     "rich>=13,<14",
+    # Required at runtime by writ/retrieval/embeddings.py for the ONNX
+    # path. Production code imports onnxruntime to serve predictions
+    # from the exported model. Without this declaration, fresh
+    # installs of writ silently lacked the package, and build_pipeline
+    # silently fell back to SentenceTransformer. The fallback path is
+    # now gated behind WRIT_ALLOW_EMBEDDING_FALLBACK=1 (see
+    # writ/retrieval/pipeline.py), so this dep must be present for
+    # the daemon to start without an override.
+    "onnxruntime>=1.20,<2",
 ]
 
 [project.urls]
@@ -60,6 +69,12 @@ dev = [
     "pytest-asyncio>=0.23,<1",
     "mypy>=1.11,<2",
     "ruff>=0.6,<1",
+    # Build-time only: scripts/export_onnx.py uses optimum to convert
+    # sentence-transformers/all-MiniLM-L6-v2 to the optimized ONNX
+    # graph that the runtime path consumes via onnxruntime. The
+    # runtime (writ/) never imports optimum. Kept out of core deps
+    # to avoid bloating production installs with build-time tooling.
+    "optimum[onnxruntime]>=2.0,<3",
 ]
 benchmark = [
     "pytest>=8,<9",
