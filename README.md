@@ -161,6 +161,46 @@ The ambiguous-set MRR and hit-rate floors were retuned downward during the Phase
 
 Full numbers in `SCALE_BENCHMARK_RESULTS.md`. Architectural detail in `HANDBOOK.md`.
 
+## Relationship to Agent Skills
+
+Anthropic's Agent Skills standard — originated by Anthropic and now maintained as an open spec at [agentskills.io](https://agentskills.io) — solves a specific problem well. Skills live as directories with a `SKILL.md` entry point; at session start the agent pre-loads each skill's `name` and `description` into its system prompt. This is **progressive disclosure**: the agent sees just enough to know when a skill applies, without the body of the skill consuming context until needed. The design optimizes for a small system-prompt footprint, agent-side relevance decisions, no per-skill load cost, and low-friction authoring.
+
+Writ targets a different problem. Writ is built around an enforcement-grade rule corpus — currently 276 rules and designed to scale into the thousands — where:
+
+- The agent must not be the matching-decision-maker between context and rule.
+- Retrieval must be triggerable by filesystem and tool-call signals, not only by prompt content.
+- The corpus exceeds what fits in pre-loaded descriptions even with progressive disclosure (1,174,142 tokens at 10,000 rules versus a pre-loaded budget measured in low thousands).
+
+### Where progressive disclosure runs out
+
+The pattern works as long as the agent's matching of descriptions to context is reliable. The matching step degrades as:
+
+- **Skill count grows.** Each pre-loaded description costs system-prompt tokens; with hundreds of entries, descriptions blur and discrimination drops.
+- **Descriptions overlap.** Two skills with semantically nearby triggers compete; the agent picks one and silently skips the other.
+- **Context becomes ambiguous.** A prompt that touches several domains gives the agent multiple plausible matches; pre-loaded descriptions don't disambiguate.
+- **The trigger isn't in the prompt.** A skill that needs to fire when the user opens a Python file, runs a specific command, or modifies a config can't be matched from prompt text alone.
+
+These are not bugs in the spec. They are the boundary of what agent-side matching against pre-loaded text can do.
+
+### Writ's alternative
+
+Writ models skills, playbooks, rationalizations, and forbidden-response sets as nodes in a hybrid-RAG knowledge graph (Neo4j-backed), retrieved by the same five-stage pipeline that surfaces rules: domain filter, BM25 keyword (Tantivy), ANN vector (hnswlib), graph traversal over a pre-computed adjacency cache, weighted ranking. The agent does not match descriptions; the pipeline matches text plus tool state plus filesystem context.
+
+Two architectural splits make this practical:
+
+- **Retrieval-on-demand for the bulk of the corpus.** A query against 276 rules returns ranked results in **0.590 ms at p95**; at 10,000 rules, **0.557 ms p95**. Retrieved tokens stay roughly flat (around 1,600) regardless of corpus size, while context stuffing scales linearly (13,876 tokens at 80 rules to 1,174,142 tokens at 10,000). Reduction: **52x at the live corpus, 726x at 10,000 rules.**
+- **Always-on bundle for the mandatory floor.** Mandatory rules and forbidden-response nodes load every turn through a dedicated endpoint with its own 5,000-token budget cap. They are excluded from the retrieval pipeline at index build time, so no ranking change can cause an enforcement rule to drop out of agent context.
+
+Thirty hook scripts read filesystem changes, tool calls, and session state, and invoke retrieval with those signals attached. Methodology arrives in the agent's context based on observable state, not on whether the agent recognized the trigger from prompt text alone.
+
+### Boundary
+
+Agent Skills is the right answer for small skill counts, human-authored discrete behaviors, contexts where agent-side matching against descriptions is acceptable, and authoring workflows that prioritize zero-config installation.
+
+Writ's model is the right answer for large enforcement-grade rule corpora, contexts where the matching decision must move out of the agent, and pipelines that must fire on tool calls and filesystem state, not just prompts.
+
+Same problem space, different optimization frontiers.
+
 ## CLI reference
 
 | Command | What it does |
@@ -270,5 +310,12 @@ The standalone install at `~/.claude/skills/writ/` will keep working; the plugin
 4. Install the plugin as described in "Install as a Claude Code plugin" above. The Neo4j Docker volume (`writ-neo4j-data`) is shared between modes, so the rule corpus survives the switch.
 
 The standalone-skill checkout itself can stay on disk; nothing in the plugin install path looks at it.
+
+## Acknowledgements
+
+Kent Beck originated the TDD vocabulary used here: red-green-refactor,
+"watch it fail," and "no production code without a failing test first."
+
+Jesse Vincent's [Superpowers](https://github.com/obra/superpowers) revealed gaps in Writ's methodology coverage, and observing that project's design choices in practice fed Writ's analysis of the Agent Skills format (see [Relationship to Agent Skills](#relationship-to-agent-skills)).
 
 License: MIT. Authored by Lucio Saldivar.
