@@ -1,7 +1,11 @@
 """Tests for documentation and version-bump deliverables.
 
-Verifies README, CHANGELOG, pyproject.toml, SKILL.md, and the new
-docs/plugin-validation.md all reflect the v1.0.1 plugin distribution work.
+Verifies README, CHANGELOG, pyproject.toml, SKILL.md, and the
+docs/plugin-validation.md all reflect the current release. Originally
+added for the v1.0.1 plugin distribution work; refactored 2026-05-15
+during the v1.1.0 release prep to read the current version dynamically
+from pyproject.toml so future bumps do not require per-release test
+edits.
 """
 
 from __future__ import annotations
