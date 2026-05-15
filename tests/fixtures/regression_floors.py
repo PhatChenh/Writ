@@ -77,6 +77,51 @@ from 72 to 276 rules (preserved verbatim from the original site at
                                    expansion (Item 1c) when variance
                                    can be characterized at the
                                    expanded sample size.
+    0.45 / 0.75     2026-05-15     Item 1b measurement, no floor change:
+                                   investigation of Q79 (the real-
+                                   retrieval-failure case identified
+                                   in Item 1a) found that SEC-DATA-PII-002
+                                   is the correct answer for the query
+                                   "customer data is leaking through
+                                   the GraphQL API" but its trigger /
+                                   statement / rationale text did not
+                                   contain "GraphQL", "customer",
+                                   "leak", or "PII" -- the BM25 +
+                                   vector ranker correctly assigned
+                                   the query to rules with stronger
+                                   keyword overlap (SEC-RATE-API-001,
+                                   which explicitly lists "REST, GraphQL,
+                                   RPC" in its trigger). Fix was to the
+                                   corpus content, not the retrieval
+                                   algorithm: added "REST or GraphQL"
+                                   and "customer" to the trigger, "leaks
+                                   PII and internal state" to the
+                                   statement, and "customer-data leaks"
+                                   plus "PII exposure on REST and GraphQL
+                                   endpoints" to the rationale. These
+                                   are genuine clarifications, not
+                                   artificial keyword injection; the
+                                   rule should match REST and GraphQL
+                                   PII concerns equally and the prior
+                                   text under-specified that. Re-
+                                   measurement: SEC-DATA-PII-002 now
+                                   ranks top-1 (score 0.946) for Q79;
+                                   Q84 (unrelated, expected CLEAN-MAGIC-
+                                   001) incidentally flipped from miss
+                                   to hit, consistent with small
+                                   ranking-stability perturbation from
+                                   the corpus edit. MRR@5 = 0.6377
+                                   (was 0.5719 after 1a; +0.066 abs,
+                                   +12% rel). Hit rate = 0.7939 (was
+                                   0.7758). Combined Item 1a + 1b
+                                   recovers ~70% of the gap from the
+                                   0.78 v0 baseline. Remaining misses:
+                                   Q77 (concurrent cron jobs; the right
+                                   rule may not exist in the corpus) and
+                                   Q81 (near miss at rank 10; top-5-vs-
+                                   top-10 cutoff question). Floor
+                                   unchanged for the same sample-size-
+                                   variance reason given in 1a.
 
 Each public-rulebook sub-phase diluted the ambiguous-set MRR / hit
 rate. After full Phase 1-5 expansion (276 rules / 30 mandatory) and

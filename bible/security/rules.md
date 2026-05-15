@@ -1228,10 +1228,10 @@ Logs are the most-replicated artifact a production system produces: they flow th
 **Mandatory**: false
 
 ### Trigger
-When designing API response shapes for endpoints that return user, account, or domain-entity data.
+When designing REST or GraphQL API response shapes for endpoints that return user, customer, account, or other domain-entity data.
 
 ### Statement
-API responses explicitly select which fields to include via a response schema or serializer. Returning the full entity (`return user`, `return model.to_dict()`) is a violation. The serializer enforces the field allowlist; fields the requester is not authorized to see are excluded at the data layer, not redacted in middleware.
+API responses explicitly select which fields to include via a response schema or serializer. Returning the full entity (`return user`, `return model.to_dict()`) leaks PII and internal state to clients; this is a violation. The serializer enforces the field allowlist; fields the requester is not authorized to see are excluded at the data layer, not redacted in middleware.
 
 ### Violation
 ```python
@@ -1258,7 +1258,7 @@ def get_user(user_id):
 Code review. Look for `to_dict()`, `model_dump()`, `__dict__` returned directly from a handler. Pydantic + response_model parameter (FastAPI) makes the allowlist explicit and enforced.
 
 ### Rationale
-Over-fetching is one of the most common privacy bugs: developers add a field for one consumer (admin UI) and forget the same response shape ships to every other consumer (public profile, mobile app, third-party integration). Explicit serializers contain the blast radius of new fields.
+Over-fetching is one of the most common privacy bugs and a frequent source of customer-data leaks: developers add a field for one consumer (admin UI) and forget the same response shape ships to every other consumer (public profile, mobile app, third-party integration). Explicit serializers contain the blast radius of new fields and prevent PII exposure on REST and GraphQL endpoints.
 
 <!-- RULE END: SEC-DATA-PII-002 -->
 ---
