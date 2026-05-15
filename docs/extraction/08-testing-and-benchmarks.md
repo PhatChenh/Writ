@@ -1,6 +1,6 @@
 # 08 — Testing and Benchmarks
 
-> **Refresh note (2026-05-10).** Ground-truth corpus and regression floors were retuned during the Phase 1-5 public-rulebook expansion. The ambiguous-set MRR@5 floor moved from 0.78 → 0.45 and the hit-rate floor from 0.90 → 0.75 as the rule corpus grew 3.8x (72 → 276 rules) while the original ambiguous-query set stayed at 19. The ground-truth file (`tests/fixtures/ground_truth_queries.json`) was expanded from 83 to 165 queries by adding 82 keyword queries targeting the new public-rulebook rule IDs. Test count grew from ~320 (when this doc was first written) to **1,455 tests collected**. Bench-target classes and budgets are unchanged. Threshold values and counts marked below are the originals; current floors live in `tests/test_graph_proximity.py:32-46` (MRR/hit-rate trajectory with phase-by-phase history) and `benchmarks/bench_targets.py`. The methodology benchmark thresholds (Phase-0 corpus, n=40) are unchanged.
+> **Refresh note (2026-05-15, v1.1.0).** Ground-truth corpus and regression floors were retuned during the Phase 1-5 public-rulebook expansion (v1.0.0). The ambiguous-set MRR@5 floor moved from 0.78 → 0.45 and the hit-rate floor from 0.90 → 0.75 as the rule corpus grew 3.8x (72 → 276 rules) while the original ambiguous-query set stayed at 19. The ground-truth file (`tests/fixtures/ground_truth_queries.json`) was expanded from 83 to 165 queries by adding 82 keyword queries targeting the new public-rulebook rule IDs. Test count grew to **1,512 tests collected (v1.1.0)** -- the 57-test increase since 1,455 reflects regression-floor consolidation, the rewritten Item 10 ranking-stability test, the new Item 3 domain-hit-rate enforcement gate, the silent-fallback closure tests for the ONNX contract, and the v1.1.0 release-prep refactors. Bench-target classes are unchanged; the bench now has **13 contractual targets** (was 12; Item 3 added `test_domain_hit_rate_top5`). v1.1.0 measurement-quality work (Items 1a-1d) recovered MRR@5 from 0.4886 to **0.6904** and hit rate from 0.7576 to **0.800** via 3 label fixes + 2 rule-text edits, no algorithmic changes. Current floors live in `tests/fixtures/regression_floors.py` (canonical) and are imported by both `bench_targets.py` and `tests/test_graph_proximity.py`. The methodology benchmark thresholds (Phase-0 corpus, n=40) are unchanged. Threshold values and counts marked below are the v1.0.0 originals.
 
 ## A. conftest.py (`tests/conftest.py`, 115 lines)
 
@@ -455,11 +455,13 @@ Current live measurement (2026-05-10, 276 rules, post Phase 1-5 expansion, ONNX 
 
 | Metric | Target | Actual (276 rules, live) | Status |
 |---|---|---|---|
-| End-to-end median | -- | 0.338 ms | -- |
-| End-to-end p95 (warm) | < 10 ms | 0.590 ms | Pass (17x headroom) |
-| Cold start | < 3 s | 2-3 s at 276 rules | Pass |
-| MRR@5 (ambiguous, n=19) | >= 0.45 (was 0.78) | 0.4886 | Pass |
-| Hit rate (165-query corpus) | >= 0.75 (was 0.90) | 0.7636 | Pass |
+| End-to-end median | -- | 0.3 ms | -- |
+| End-to-end p95 (warm, post-warmup) | < 10 ms | 0.5 ms | Pass (17x headroom) |
+| Cold start (cold-cold) | < 3.5 s | ~2.4 s at 276 rules | Pass |
+| Cold start (warm HNSW cache, v1.1.0) | -- | ~0.24 s | n/a (10x faster than cold-cold) |
+| MRR@5 (ambiguous, n=19) | >= 0.45 (was 0.78) | 0.6904 (v1.1.0; was 0.4886 at v1.0.0) | Pass |
+| Hit rate (165-query corpus) | >= 0.75 (was 0.90) | 0.800 (v1.1.0; was 0.7576 at v1.0.0) | Pass |
+| Domain hit rate top-5 (v1.1.0) | >= 0.90 | 0.945 | Pass |
 | Memory (warm) | < 2 GB | ~1 GB | Pass |
 | Integrity check | < 500 ms | (re-measure post-Phase-5) | -- |
 | Context reduction (synthetic 10K) | > 1x | 726x | Pass |
@@ -530,11 +532,12 @@ Post Phase 1-5 expansion (live corpus 276 rules, ground-truth corpus 165 queries
 
 | Metric | Source | Threshold | Actual |
 |---|---|---|---|
-| MRR@5 (ambiguous, n=19) | `bench_targets.py::TestRetrievalPrecision.test_mrr5_ambiguous_set` | >= 0.45 (was 0.78) | 0.4886 |
-| Hit rate (all queries, n=165) | `bench_targets.py::TestRetrievalPrecision.test_hit_rate_all_queries` | >= 0.75 (was 0.90) | 0.7636 (126/165) |
+| MRR@5 (ambiguous, n=19) | `bench_targets.py::TestRetrievalPrecision.test_mrr5_ambiguous_set` | >= 0.45 (was 0.78) | **0.6904** (v1.1.0; was 0.4886 at v1.0.0 -- Items 1a-1d recovered ~70% of the gap via 4 label/text fixes) |
+| Hit rate (all queries, n=165) | `bench_targets.py::TestRetrievalPrecision.test_hit_rate_all_queries` | >= 0.75 (was 0.90) | **0.800** (132/165 at v1.1.0; was 0.7636 / 126/165 at v1.0.0) |
+| Domain hit rate top-5 (all 164 queries) | `bench_targets.py::TestRetrievalPrecision.test_domain_hit_rate_top5` (v1.1.0) | >= 0.90 | **0.945** (155/164) |
 | MRR@5 (Phase-0 methodology, n=40) | `methodology_bench.py` | >= 0.78 | 0.8583 (unchanged) |
 | Hit rate (Phase-0 methodology) | `methodology_bench.py` | >= 0.90 | 1.0000 (unchanged) |
 | Bundle completeness (Phase-0) | `methodology_bench.py` | >= 0.85 | 0.8542 (unchanged) |
-| ONNX vs PyTorch ranking stability | README and HANDBOOK | identical top-5 | 0/83 queries diverge (unchanged) |
+| ONNX vs PyTorch ranking stability | `test_embeddings.py::TestOnnxRankingStability::test_top1_and_top5_set_equivalent_pt_vs_onnx` (v1.1.0 rewrite, n=8 queries x 12-rule inline corpus) | identical top-1 and top-5 set | 0/8 queries diverge |
 
 The retrieval-quality floors against the public-rulebook corpus were lowered intentionally during the expansion (the corpus grew 3.8x while the 19-query ambiguous-evaluation set held constant). Phase 6 plans a ground-truth regeneration pass to raise the floors back up. Methodology retrieval is unaffected.

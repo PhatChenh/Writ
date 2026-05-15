@@ -65,18 +65,19 @@ All numbers verified against the live system on 2026-05-10 or against `SCALE_BEN
 
 ### Quality
 
-- MRR at 5 (ambiguous queries, n=19): 0.4886 (post-expansion floor 0.45; pre-expansion 0.78 baseline against the smaller 72-rule corpus)
-- Hit rate (Phase 6 ground-truth corpus, 165 queries covering pre-expansion + new public-rulebook rule IDs): 0.7636 (threshold 0.75)
+- MRR at 5 (ambiguous queries, n=19): **0.6904** (floor 0.45; pre-expansion baseline was 0.78 against the smaller 72-rule corpus)
+- Hit rate (Phase 6 ground-truth corpus, 165 queries covering pre-expansion + new public-rulebook rule IDs): **0.800** (floor 0.75)
+- Domain hit rate top-5 (all 164 queries): **0.945** (floor 0.90, enforcement gate added in v1.1.0)
 - Methodology MRR at 5 (n=40, signed off corpus): 0.8583
 - Methodology hit rate: 1.0000 (40/40)
-- ONNX vs PyTorch ranking stability: 0/83 queries differ in top-5
+- ONNX vs PyTorch ranking stability: identical top-1 and top-5 sets on the fixed inline 12-rule / 8-query test (Item 10 rewrite, v1.1.0)
 
-The retrieval-quality floors were retuned downward during the Phase 1-5 expansion: the rule corpus grew 3.8x (72 to 276 rules) and dilutes the ambiguous-set MRR signal. The architectural choice was to trust the floor adjustments and treat retrieval quality as recoverable in Phase 6+ ground-truth refresh rather than holding the expansion back. Methodology retrieval is unaffected (a separate, signed-off corpus).
+The v1.1.0 release closed most of the v0->v1.0.0 quality regression that the original critique flagged. v1.0.0 measured MRR@5 at 0.4886; auditing the 6 then-current ambiguous-set misses found 4 were measurement-quality issues (3 mislabeled queries plus 2 rules whose text under-specified how users actually phrase the symptom). 4 small edits (3 label fixes in Item 1a, 1 in Item 1c; rule-text clarifications for SEC-DATA-PII-002 in Item 1b and SOLID-DIP-002 in Item 1d) moved MRR@5 from 0.4886 to 0.6904 with zero changes to the retrieval algorithm or ranking weights. Remaining ~12% gap to the v0 0.78 baseline is genuine corpus-growth dilution (3.8x more rules competing per query). The floors at 0.45 / 0.75 stand for v1.1.0; a set-expansion pass to characterize variance at larger N is the next-if-needed step. Methodology retrieval is unaffected (a separate, signed-off corpus).
 
 ### Coverage
 
-- 1,442 tests (post Phase 1-5), all passing; 15 skipped
-- 12 contractual benchmark targets, all pass
+- **1,512 tests** (v1.1.0), all passing; 14 skipped
+- **13 contractual benchmark targets**, all pass (one added in v1.1.0: domain hit rate top-5)
 - 30 hook scripts wired through Claude Code (3 legacy hooks removed 2026-05-10)
 - 7 cross-language static-analysis functions in `bin/run-analysis.sh` (injection, auth/authz/validation, crypto/headers, data protection, N+1, stateless processes, plus the original per-language linters)
 - 36 HTTP endpoints (11 top-level plus 25 under `/session/{id}/`)
@@ -207,7 +208,7 @@ Same as context stuffing, but worse: it pollutes the system prompt where it is h
 - Friction log analytics with a dashboard (`GET /dashboard`).
 - Public out-of-the-box rulebook seeded: 198 new universal rules across 12 domains; 19 new mandatory rules each with a cross-language analyzer.
 
-**Roadmap:** ground-truth corpus refresh and retrieval-floor retune (Phase 6 lowered MRR@5 to 0.45 and hit-rate to 0.75 under the expanded corpus; next step is corpus regeneration to recover precision); multi-query session simulation work; consider a Qdrant-backed vector store for corpora over 100K rules; consider an optional remote-graph mode and distributed sub-agent dispatch.
+**Roadmap:** v1.1.0 closed most of the v0->v1.0.0 quality regression (MRR@5 0.4886 -> 0.6904 via measurement-quality fixes; the underlying floors at 0.45 / 0.75 stand). Open: ambiguous-set expansion to ~70 queries to characterize variance at larger N before any floor raise; rewrite the synthetic scale generator to produce realistic rule text length and embedding diversity (the v1.0.0 synthetic curve underpredicts real-corpus per-query cost, per the v1.1.0 Item 2 investigation); multi-query session simulation work; consider a Qdrant-backed vector store for corpora over 100K rules; consider an optional remote-graph mode and distributed sub-agent dispatch.
 
 ## TL;DR by audience
 
