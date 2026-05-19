@@ -6,6 +6,17 @@ At the live 276-rule production corpus (post Phase 1-5 public-rulebook expansion
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the v1.2.0 release notes (proactive context-window management, hook hot-path latency consolidation, friction-log mode canonicalization, PostToolUse banner fix) and the v1.0.0 + v1.0.1 + v1.1.0 history of capabilities shipped.
 
+## Browse the architecture in your browser
+
+Four self-contained HTML pages render the whole system. No clone or install required: open any link below and walk the diagrams. A sticky top nav inside each page cross-links to the other three, so you can flip between layers without coming back to the README.
+
+- **[Complete overview](https://infinri.github.io/Writ/writ-complete-overview.html)**: seven diagrams (system block, session flowchart, query sequence, pipeline funnel, mode/phase state machine, knowledge graph excerpt, rule-evolution lifecycle) covering the full system end to end. Start here.
+- **[Architecture layers](https://infinri.github.io/Writ/writ-architecture-flowchart.html)**: eight tabbed layer cards (pipeline, weighting, mandatory-vs-retrieved split, knowledge graph, mode system, phase gates, enforcement layer, evolution model) with plain-English summaries and technical drill-in.
+- **[Workflow flowchart](https://infinri.github.io/Writ/writ-workflow-flowchart.html)**: long-ways START-to-END SVG process flowchart of one Writ-enforced coding session, with rectangles for steps, diamonds for decisions, and dashed loop-back arrows for the iterate-until-it-passes gates. The description and step detail stay anchored in a sticky left rail.
+- **[Commands reference](https://infinri.github.io/Writ/writ-commands.html)**: every CLI command, every `writ-session.py` subcommand, and every HTTP endpoint, tabbed by group with live filter.
+
+These four pages live at the repo root (`writ-complete-overview.html`, `writ-architecture-flowchart.html`, `writ-workflow-flowchart.html`, `writ-commands.html`) and are served by GitHub Pages from `main`. Clone and open locally for offline browsing, or follow the links above straight from a browser tab.
+
 ## Install as a Claude Code plugin
 
 Writ is published as a single-plugin marketplace in this repo.
