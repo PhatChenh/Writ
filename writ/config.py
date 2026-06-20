@@ -17,9 +17,10 @@ except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[no-redef]
 
 # Per ARCH-CONST-001: named constants for defaults.
-DEFAULT_NEO4J_URI = "bolt://localhost:7687"
-DEFAULT_NEO4J_USER = "neo4j"
-DEFAULT_NEO4J_PASSWORD = "writdevpass"
+DEFAULT_FALKORDB_PATH = ".writ/graph.db"
+DEFAULT_FALKORDB_GRAPH = "writ"
+DEFAULT_FALKORDB_MODULE = "vendor/falkordb.so"
+DEFAULT_REDIS_BIN = "/opt/homebrew/opt/redis/bin/redis-server"
 DEFAULT_HNSW_CACHE_DIR = str(Path.home() / ".cache" / "writ" / "hnsw")
 
 # Default config file path: writ.toml in the package root (one level above writ/).
@@ -43,22 +44,28 @@ def load_config(path: str | None = None) -> dict[str, Any]:
         return {}
 
 
-def get_neo4j_uri(path: str | None = None) -> str:
-    """Return neo4j.uri from config, falling back to DEFAULT_NEO4J_URI."""
+def get_falkordb_path(path: str | None = None) -> str:
+    """Return falkordb.path from config, falling back to DEFAULT_FALKORDB_PATH."""
     cfg = load_config(path)
-    return cfg.get("neo4j", {}).get("uri", DEFAULT_NEO4J_URI)
+    return cfg.get("falkordb", {}).get("path", DEFAULT_FALKORDB_PATH)
 
 
-def get_neo4j_user(path: str | None = None) -> str:
-    """Return neo4j.user from config, falling back to DEFAULT_NEO4J_USER."""
+def get_falkordb_graph(path: str | None = None) -> str:
+    """Return falkordb.graph from config, falling back to DEFAULT_FALKORDB_GRAPH."""
     cfg = load_config(path)
-    return cfg.get("neo4j", {}).get("user", DEFAULT_NEO4J_USER)
+    return cfg.get("falkordb", {}).get("graph", DEFAULT_FALKORDB_GRAPH)
 
 
-def get_neo4j_password(path: str | None = None) -> str:
-    """Return neo4j.password from config, falling back to DEFAULT_NEO4J_PASSWORD."""
+def get_falkordb_module(path: str | None = None) -> str:
+    """Return falkordb.module from config, falling back to DEFAULT_FALKORDB_MODULE."""
     cfg = load_config(path)
-    return cfg.get("neo4j", {}).get("password", DEFAULT_NEO4J_PASSWORD)
+    return cfg.get("falkordb", {}).get("module", DEFAULT_FALKORDB_MODULE)
+
+
+def get_redis_bin(path: str | None = None) -> str:
+    """Return falkordb.redis_bin from config, falling back to DEFAULT_REDIS_BIN."""
+    cfg = load_config(path)
+    return cfg.get("falkordb", {}).get("redis_bin", DEFAULT_REDIS_BIN)
 
 
 def get_hnsw_cache_dir(path: str | None = None) -> str:

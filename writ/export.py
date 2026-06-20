@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
 
 # Per ARCH-CONST-001: named constants.
 EXPORT_TIMESTAMP_FILE = ".export_timestamp"
@@ -125,7 +125,7 @@ def _build_file_content(rules: list[dict]) -> str:
 
 
 async def export_rules_to_markdown(
-    db: Neo4jConnection,
+    db: FalkorDBLiteConnection,
     output_dir: Path,
     bible_dir: Path | None = None,
 ) -> dict[str, int]:

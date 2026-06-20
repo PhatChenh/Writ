@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from writ.compression.clusters import ClusterResult
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
 
 # Per ARCH-CONST-001
 ABSTRACTION_ID_PREFIX = "ABS"
@@ -57,7 +57,7 @@ def generate_abstractions(
 
 
 async def write_abstractions_to_graph(
-    db: Neo4jConnection,
+    db: FalkorDBLiteConnection,
     abstractions: list[dict],
 ) -> int:
     """Write Abstraction nodes and ABSTRACTS edges to Neo4j.

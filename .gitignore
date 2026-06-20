@@ -18,6 +18,12 @@ build/
 # Neo4j data (managed by Docker volume)
 neo4j-data/
 
+# FalkorDBLite embedded graph data
+.writ/
+
+# FalkorDB module binary (platform-specific, downloaded per-platform)
+vendor/
+
 # Tantivy/vector index caches
 .cache/
 

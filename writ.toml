@@ -1,5 +1,5 @@
 [source]
-canonical = "neo4j"
+canonical = "falkordb"
 exported_view = "bible/"
 
 [service]
@@ -8,11 +8,11 @@ port = 8765
 timeout_ms = 50
 log_level = "INFO"
 
-[neo4j]
-uri = "bolt://localhost:7687"
-user = "neo4j"
-password = "writdevpass"
-database = "neo4j"
+[falkordb]
+path = ".writ/graph.db"
+graph = "writ"
+module = "vendor/falkordb.so"
+redis_bin = "/opt/homebrew/opt/redis/bin/redis-server"
 
 [embedding]
 model = "all-MiniLM-L6-v2"

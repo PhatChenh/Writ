@@ -45,7 +45,7 @@ from writ.retrieval.ranking import (
 from writ.retrieval.traversal import AdjacencyCache
 
 if TYPE_CHECKING:
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
 
 # Preferred ONNX model directory.
 _ONNX_DIR = DEFAULT_ONNX_DIR
@@ -486,7 +486,7 @@ def _fold_auxiliary_text_into_body(node: dict, label: str) -> str:
 
 
 async def build_pipeline(
-    db: Neo4jConnection,
+    db: FalkorDBLiteConnection,
     model_name: str = DEFAULT_EMBEDDING_MODEL,
     weights: RankingWeights | None = None,
     embedding_model: object | None = None,
@@ -510,11 +510,8 @@ async def build_pipeline(
         WHERE r.mandatory IS NULL OR r.mandatory = false
         RETURN r
     """
-    rules: list[dict] = []
-    async with db._driver.session(database=db._database) as session:
-        result = await session.run(query)
-        async for record in result:
-            rules.append(dict(record["r"]))
+    rule_rows = db._execute_query(query)
+    rules: list[dict] = [row["r"] for row in rule_rows]
 
     # Load retrievable methodology nodes. Each becomes a candidate alongside Rules.
     retrievable_methodology_labels = ("Skill", "Playbook", "Technique", "AntiPattern", "ForbiddenResponse")
@@ -529,28 +526,27 @@ async def build_pipeline(
     for label in retrievable_methodology_labels:
         id_field = retrievable_id_fields[label]
         q = f"MATCH (n:{label}) RETURN n"
-        async with db._driver.session(database=db._database) as session:
-            result = await session.run(q)
-            async for record in result:
-                node = dict(record["n"])
-                # Normalize: carry both the original id field AND a `rule_id`
-                # alias so BM25/vector stores (keyed on rule_id by convention)
-                # can accept it without schema changes.
-                node_id = node.get(id_field)
-                if not node_id:
-                    continue
-                node["rule_id"] = node_id
-                node["node_type"] = label
-                # Methodology nodes are never "mandatory" in the coding-rule sense;
-                # always_on governs the render path separately.
-                node["mandatory"] = False
-                # Phase 0 MethodologyIndex parity: fold type-specific text fields
-                # into `body` so BM25 surfaces them. Without this, queries matching
-                # a forbidden phrase literal (e.g. "you're absolutely right") miss
-                # the corresponding FRB node because the phrase lives in a list
-                # field, not the default indexed text.
-                node["body"] = _fold_auxiliary_text_into_body(node, label)
-                methodology_nodes.append(node)
+        meth_rows = db._execute_query(q)
+        for row in meth_rows:
+            node = row["n"]
+            # Normalize: carry both the original id field AND a `rule_id`
+            # alias so BM25/vector stores (keyed on rule_id by convention)
+            # can accept it without schema changes.
+            node_id = node.get(id_field)
+            if not node_id:
+                continue
+            node["rule_id"] = node_id
+            node["node_type"] = label
+            # Methodology nodes are never "mandatory" in the coding-rule sense;
+            # always_on governs the render path separately.
+            node["mandatory"] = False
+            # Phase 0 MethodologyIndex parity: fold type-specific text fields
+            # into `body` so BM25 surfaces them. Without this, queries matching
+            # a forbidden phrase literal (e.g. "you're absolutely right") miss
+            # the corresponding FRB node because the phrase lives in a list
+            # field, not the default indexed text.
+            node["body"] = _fold_auxiliary_text_into_body(node, label)
+            methodology_nodes.append(node)
 
     all_candidates = rules + methodology_nodes
     for r in rules:

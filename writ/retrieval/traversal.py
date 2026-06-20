@@ -57,9 +57,7 @@ class AdjacencyCache:
             WHERE src_id IS NOT NULL AND tgt_id IS NOT NULL
             RETURN src_id AS source, type(r) AS edge_type, tgt_id AS target
         """
-        async with db._driver.session(database=db._database) as session:
-            result = await session.run(query)
-            records = [record.data() async for record in result]
+        records = db._execute_query(query)
 
         self._neighbors.clear()
         for rec in records:

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from writ.graph.db import Neo4jConnection
+from writ.graph.db import FalkorDBLiteConnection
 from writ.graph.ingest import (
     NODE_ID_FIELDS,
     discover_rule_files,
@@ -40,15 +40,15 @@ from writ.graph.ingest import (
 
 # Per SOLID-OCP-002: per-node-type dispatch is a registry lookup. Adding a
 # new node type is a one-line registry edit, not a CLI-rewrite.
-Ingester = Callable[[Neo4jConnection, dict], Awaitable[str]]
+Ingester = Callable[[FalkorDBLiteConnection, dict], Awaitable[str]]
 
 
-async def _ingest_rule(db: Neo4jConnection, clean: dict) -> str:
+async def _ingest_rule(db: FalkorDBLiteConnection, clean: dict) -> str:
     return await db.create_rule(clean)
 
 
 def _make_methodology_ingester(node_type: str) -> Ingester:
-    async def _ingest(db: Neo4jConnection, clean: dict) -> str:
+    async def _ingest(db: FalkorDBLiteConnection, clean: dict) -> str:
         return await db.create_methodology_node(node_type, clean)
 
     return _ingest
@@ -158,7 +158,7 @@ def _extract_pydantic_field(exc: Exception) -> tuple[str | None, str]:
 
 async def ingest_path(
     path: Path,
-    db: Neo4jConnection,
+    db: FalkorDBLiteConnection,
     *,
     only: set[str] | None = None,
     dry_run: bool = False,
@@ -324,7 +324,7 @@ async def ingest_path(
 async def ingest_edges(
     parsed_nodes: list[dict],
     parsed_edges: list[dict],
-    db: Neo4jConnection,
+    db: FalkorDBLiteConnection,
 ) -> tuple[int, int]:
     """Create methodology + cross-reference edges; return (created, dangling)."""
     # Build the set of node IDs that are known to the graph: parsed-this-run

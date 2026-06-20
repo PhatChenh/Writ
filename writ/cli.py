@@ -8,7 +8,7 @@ from pathlib import Path
 
 import typer
 
-from writ.config import get_neo4j_uri, get_neo4j_user, get_neo4j_password
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
 
 DEFAULT_BIBLE_DIR = "bible/"
 DEFAULT_HOST = "localhost"
@@ -365,7 +365,7 @@ def import_markdown(
     ),
 ) -> None:
     """Import bible content (Rules + methodology) into the graph. Validates schema. Triggers export."""
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
     from writ.graph.methodology_ingest import (
         KNOWN_NODE_TYPES,
         ingest_path,
@@ -392,7 +392,10 @@ def import_markdown(
             raise typer.Exit(code=2)
 
     async def _run() -> int:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             report = await ingest_path(
                 path, db, only=parsed_only, dry_run=dry_run,
@@ -443,13 +446,16 @@ def validate(
     """Run integrity checks: conflicts, orphans, staleness, redundancy."""
     import time
 
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
     from writ.graph.integrity import IntegrityChecker
 
     async def _run() -> int:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
-            checker = IntegrityChecker(db._driver, db._database)
+            checker = IntegrityChecker(db)
             start = time.perf_counter()
             findings = await checker.run_all_checks()
             elapsed_ms = (time.perf_counter() - start) * 1000
@@ -533,7 +539,7 @@ def add() -> None:
         check_redundancy,
         suggest_relationships,
     )
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
     from writ.graph.schema import Rule
     from writ.retrieval.pipeline import build_pipeline
     from writ.retrieval.traversal import AdjacencyCache
@@ -565,7 +571,10 @@ def add() -> None:
             "last_validated": date.today().isoformat(),
         }
 
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             # ID collision check runs before schema validation so an author
             # re-using an existing rule_id fails fast without spending time
@@ -652,13 +661,16 @@ def edit(
 ) -> None:
     """Edit an existing rule in the graph."""
     from writ.authoring import check_conflicts, check_redundancy, suggest_relationships
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
     from writ.graph.schema import Rule
     from writ.retrieval.pipeline import build_pipeline
     from writ.retrieval.traversal import AdjacencyCache
 
     async def _run() -> None:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             existing = await db.get_rule(rule_id)
             if existing is None:
@@ -743,10 +755,13 @@ def export(
 ) -> None:
     """Regenerate Markdown from graph. Overwrites output directory."""
     from writ.export import export_rules_to_markdown
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
 
     async def _run() -> None:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             result = await export_rules_to_markdown(db, output)
             typer.echo(f"Exported {result['rules_exported']} rules to {output}")
@@ -788,10 +803,13 @@ def compress() -> None:
 
     from writ.compression.abstractions import generate_abstractions, write_abstractions_to_graph
     from writ.compression.clusters import evaluate_both
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
 
     async def _run() -> None:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             # Load non-mandatory rules.
             all_rules = await db.get_all_rules()
@@ -847,30 +865,32 @@ def role_prompt(
     files are exported from the graph.
     """
     import asyncio
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
 
     async def _fetch() -> None:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
-            async with db._driver.session(database=db._database) as session:
-                query = """
-                    MATCH (r:SubagentRole)
-                    WHERE r.name = $name
-                       OR r.role_id = $name
-                       OR r.role_id = 'ROL-' + toUpper(replace($name, 'writ-', '')) + '-001'
-                    RETURN r.role_id AS role_id, r.name AS name,
-                           r.prompt_template AS prompt,
-                           r.model_preference AS model
-                    LIMIT 1
-                """
-                result = await session.run(query, name=role)
-                rec = await result.single()
-                if rec is None:
-                    typer.echo(f"SubagentRole '{role}' not found in graph.", err=True)
-                    raise typer.Exit(code=1)
-                typer.echo(f"# {rec['role_id']}  (name={rec['name']}, model={rec['model']})")
-                typer.echo("")
-                typer.echo(rec["prompt"])
+            query = """
+                MATCH (r:SubagentRole)
+                WHERE r.name = $name
+                   OR r.role_id = $name
+                   OR r.role_id = 'ROL-' + toUpper(replace($name, 'writ-', '')) + '-001'
+                RETURN r.role_id AS role_id, r.name AS name,
+                       r.prompt_template AS prompt,
+                       r.model_preference AS model
+                LIMIT 1
+            """
+            role_rows = db._execute_query(query, {"name": role})
+            rec = role_rows[0] if role_rows else None
+            if rec is None:
+                typer.echo(f"SubagentRole '{role}' not found in graph.", err=True)
+                raise typer.Exit(code=1)
+            typer.echo(f"# {rec['role_id']}  (name={rec['name']}, model={rec['model']})")
+            typer.echo("")
+            typer.echo(rec["prompt"])
         finally:
             await db.close()
 
@@ -883,13 +903,16 @@ def migrate() -> None:
 
     Backward-compat shim: delegates to `writ import-markdown` with default args.
     """
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
     from writ.graph.methodology_ingest import ingest_path
 
     path = Path(DEFAULT_BIBLE_DIR)
 
     async def _run() -> int:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             report = await ingest_path(path, db, only=None, dry_run=False)
             typer.echo(report.render())
@@ -911,11 +934,14 @@ def query(
     budget: int | None = typer.Option(None, help="Context budget in tokens."),
 ) -> None:
     """CLI rule query for testing retrieval quality."""
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
     from writ.retrieval.pipeline import build_pipeline
 
     async def _run() -> None:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             typer.echo("Building pipeline (loading indexes)...")
             pipeline = await build_pipeline(db)
@@ -943,14 +969,17 @@ def feedback(
     signal: str = typer.Argument(..., help="Signal: 'positive' or 'negative'."),
 ) -> None:
     """Record positive or negative feedback for a rule (hook integration)."""
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
 
     if signal not in ("positive", "negative"):
         typer.echo(f"Invalid signal: {signal}. Must be 'positive' or 'negative'.")
         raise typer.Exit(code=1)
 
     async def _run() -> None:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             if signal == "positive":
                 found = await db.increment_positive(rule_id)
@@ -985,7 +1014,7 @@ def propose(
     from datetime import date
 
     from writ.gate import propose_rule
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
     from writ.origin_context import DEFAULT_DB_PATH
     from writ.retrieval.pipeline import build_pipeline
 
@@ -1004,7 +1033,10 @@ def propose(
     }
 
     async def _run() -> None:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             typer.echo("Building pipeline...")
             pipeline = await build_pipeline(db)
@@ -1038,10 +1070,13 @@ def review(
     stats: bool = typer.Option(False, "--stats", help="Show review queue statistics."),
 ) -> None:
     """Review AI-proposed rules. List, inspect, promote, reject, or downweight."""
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
 
     async def _run() -> None:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
         try:
             if stats:
                 counts = await db.count_by_authority()
