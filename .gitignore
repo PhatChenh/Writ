@@ -52,3 +52,5 @@ capabilities.md
 .claude/settings.local.json
 writ.egg-info/
 .jolli/
+.reasonix/
+.codegraph/

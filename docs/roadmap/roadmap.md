@@ -44,10 +44,41 @@ Writ can store and retrieve rules from FalkorDBLite instead of Neo4j. `writ serv
 - `writ query "security"` returns ranked results
 - Manual verification: graph contains all 12 node types and 10 edge types
 
-**Open questions:**
-- [Technical research] FalkorDBLite Cypher dialect differences from Neo4j — which queries need rewriting?
-- [Technical research] FalkorDBLite index creation syntax — does it support same index types as Neo4j?
-- [Technical research] FalkorDBLite transaction semantics — does it support same commit/rollback patterns?
+**Open questions (all resolved during implementation):**
+- ~~FalkorDBLite Cypher dialect differences~~ — `datetime()` and `duration()` not supported; compute in Python and pass as params. All other Cypher works as-is.
+- ~~FalkorDBLite index creation syntax~~ — Standard `CREATE INDEX` works. No full-text index support (BM25 via Tantivy instead).
+- ~~FalkorDBLite transaction semantics~~ — No multi-statement transactions. Each `_execute_query()` call is atomic. Sufficient for Writ's usage patterns.
+
+**Status:** Implementation complete. See "Phase 1 — Carryover" section below for deferred items.
+
+### Phase 1 — Carryover / Deferred Items
+
+Items discovered during Phase 1 implementation that belong in later phases:
+
+**Test suite (→ Phase 3):**
+- 13 test files still reference `Neo4jConnection`, `get_neo4j_*`, or `from neo4j`: `test_compression`, `test_retrieval`, `test_graph_proximity`, `test_authoring`, `test_session`, `test_integrity`, `test_embeddings`, `test_post_suite_neo4j_restoration`, `test_ingest`, `test_config`, `test_config_integration`, `test_infrastructure`, `test_export`
+- `test_config.py` (26 Neo4j refs) and `test_config_integration.py` (16 refs) need full rewrite — they test Neo4j config functions that no longer exist
+- `test_integrity.py` (19 refs) uses old `IntegrityChecker(db._driver, db._database)` constructor — now takes `IntegrityChecker(db)` directly
+- `test_post_suite_neo4j_restoration.py` is entirely Neo4j-specific — may be deleted or replaced with FalkorDB equivalent
+
+**Scripts and infrastructure (→ Phase 2):**
+- 19 files in `scripts/` reference Neo4j or Docker — all seed scripts, bootstrap, ensure-server, profile/instrument scripts need updating
+- `vendor/falkordb.so` is gitignored and platform-specific (macOS .so) — needs distribution/bootstrap strategy for other platforms and CI
+
+**Cosmetic (→ Phase 2 or 3):**
+- `_coerce_neo4j_value()` function name in `writ/graph/db.py` still says "neo4j" — rename to `_coerce_value()`
+- Docstrings in `writ/authoring.py` and `writ/compression/abstractions.py` still reference "Neo4j" — update to "FalkorDB" or generic "graph"
+- Comments referencing Neo4j scattered throughout production code
+
+**Cypher dialect (→ Phase 3, verified during Phase 1):**
+- `datetime()` and `duration()` Cypher functions not available in FalkorDB — already resolved in production code (compute in Python, pass as params), but test code using these patterns needs same treatment
+- FalkorDB returns `QueryResult` with positional tuples + `[type_code, name]` headers — `_execute_query()` bridge handles this, but tests mocking old `record.data()` pattern need updating
+
+**Tooling:**
+- CodeGraph index empty — run `codegraph index .` after Phase 1 merge to rebuild
+- Stale hook: `~/.claude/settings.json:58` references `impact_analyzer.py` which doesn't exist — blocks `Read` tool calls
+
+---
 
 ### Phase 2 — Infrastructure Cleanup
 
@@ -63,6 +94,10 @@ Fresh clone can bootstrap without Docker. All seed scripts populate embedded DB.
 
 **Scope:**
 - IN: `scripts/bootstrap.sh`, `scripts/ensure-server.sh`, all `scripts/seed_phase_*.py`, `docker-compose.yml`, `hooks/scripts/session-start-bootstrap.sh`
+- IN: 19 scripts referencing Neo4j/Docker identified in Phase 1 carryover
+- IN: `vendor/falkordb.so` distribution strategy — platform-specific binary needs bootstrap/CI plan
+- IN: Rename `_coerce_neo4j_value()` → `_coerce_value()` in `writ/graph/db.py`
+- IN: Update stale Neo4j references in docstrings (`writ/authoring.py`, `writ/compression/abstractions.py`)
 - OUT: Test suite, hook logic, retrieval pipeline
 
 **Done when:**
@@ -87,6 +122,10 @@ Full test suite passes. Confidence that the storage swap preserves all behavior.
 
 **Scope:**
 - IN: All test files referencing Neo4j fixtures, test conftest, benchmark baselines
+- IN: 13 test files identified in Phase 1 carryover (see list above)
+- IN: `test_config.py` and `test_config_integration.py` full rewrite for FalkorDB config functions
+- IN: `test_integrity.py` constructor pattern update (`IntegrityChecker(db)` not `(db._driver, db._database)`)
+- IN: Decide fate of `test_post_suite_neo4j_restoration.py` (delete or replace)
 - OUT: Adding new tests, changing test logic, modifying what tests verify
 
 **Done when:**
@@ -96,6 +135,7 @@ Full test suite passes. Confidence that the storage swap preserves all behavior.
 
 **Open questions:**
 - [Technical research] FalkorDBLite test isolation — can we create/destroy DBs per test without file system cleanup?
+- [Technical research] Mock strategy — tests currently mock `neo4j.AsyncDriver`; need equivalent mock for `FalkorDBLiteConnection._execute_query()`
 
 ### Phase 4 — Workflow Adaptation
 
