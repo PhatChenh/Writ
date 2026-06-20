@@ -26,8 +26,8 @@ from writ.analysis.analyzer import run_analysis
 from writ.analysis.friction import log_friction_event
 from writ.analysis.instrumentation import Instrumentation
 from writ.analysis.llm import LlmAnalyzer
-from writ.config import get_neo4j_uri, get_neo4j_user, get_neo4j_password
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 from writ.retrieval.pipeline import RetrievalPipeline, build_pipeline
 
 # Load writ-session.py as a module for session route handlers.
@@ -125,7 +125,7 @@ class ConflictsRequest(BaseModel):
 
 # Module-level state set during lifespan.
 _pipeline: RetrievalPipeline | None = None
-_db: Neo4jConnection | None = None
+_db: FalkorDBLiteConnection | None = None
 _startup_time: datetime | None = None
 _llm_client: LlmAnalyzer | None = None
 _instrumentation: Instrumentation | None = None
@@ -140,7 +140,10 @@ async def lifespan(app: FastAPI):
     # hook defaults to 200000 when the env var is missing or unparseable.
     _validate_context_window_env()
 
-    _db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+    _db = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     _pipeline = await build_pipeline(_db)
     _llm_client = LlmAnalyzer()
     _instrumentation = Instrumentation()
@@ -267,9 +270,7 @@ async def check_conflicts(request: ConflictsRequest) -> dict[str, Any]:
         AND a.rule_id < b.rule_id
         RETURN a.rule_id AS rule_a, b.rule_id AS rule_b
     """
-    async with _db._driver.session(database=_db._database) as session:
-        result = await session.run(query, ids=request.rule_ids)
-        conflicts = [record.data() async for record in result]
+    conflicts = _db._execute_query(query, {"ids": request.rule_ids})
     return {"conflicts": conflicts}
 
 
@@ -283,10 +284,8 @@ async def health() -> dict[str, Any]:
 
     # Count mandatory rules.
     query = "MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS count"
-    async with _db._driver.session(database=_db._database) as session:
-        result = await session.run(query)
-        record = await result.single()
-        mandatory_count = record["count"]
+    rows = _db._execute_query(query)
+    mandatory_count = rows[0]["count"] if rows else 0
 
     return {
         "status": "healthy",
@@ -1066,9 +1065,7 @@ async def always_on_bundle(mode: str | None = None) -> dict[str, Any]:
                r.severity AS severity, r.scope AS scope, r.domain AS domain
         ORDER BY r.severity DESC, r.rule_id
     """
-    async with _db._driver.session(database=_db._database) as session:
-        result = await session.run(query)
-        rows = [record.data() async for record in result]
+    rows = _db._execute_query(query)
 
     # FRB-COMMS-* ForbiddenResponse nodes are also always-on.
     frb_query = """
@@ -1078,9 +1075,7 @@ async def always_on_bundle(mode: str | None = None) -> dict[str, Any]:
                n.scope AS scope, n.domain AS domain
         ORDER BY n.forbidden_id
     """
-    async with _db._driver.session(database=_db._database) as session:
-        result = await session.run(frb_query)
-        frb_rows = [record.data() async for record in result]
+    frb_rows = _db._execute_query(frb_query)
 
     # Phase 6 follow-up: methodology nodes (Skill, Playbook) tagged
     # always_on=true also surface here. Rule + ForbiddenResponse remain
@@ -1095,9 +1090,7 @@ async def always_on_bundle(mode: str | None = None) -> dict[str, Any]:
                    n.scope AS scope, n.domain AS domain
             ORDER BY n.{id_field}
         """
-        async with _db._driver.session(database=_db._database) as session:
-            result = await session.run(q)
-            methodology_rows.extend([record.data() async for record in result])
+        methodology_rows.extend(_db._execute_query(q))
 
     combined = rows + frb_rows + methodology_rows
 
@@ -1147,20 +1140,19 @@ async def subagent_role_get(name: str) -> dict[str, Any]:
     """
     if _db is None:
         return {"error": "Database not connected."}
-    async with _db._driver.session(database=_db._database) as session:
-        query = """
-            MATCH (r:SubagentRole)
-            WHERE r.name = $name
-               OR r.role_id = $name
-               OR r.role_id = 'ROL-' + toUpper(replace($name, 'writ-', '')) + '-001'
-            RETURN r.role_id AS role_id, r.name AS name,
-                   r.prompt_template AS prompt_template,
-                   r.model_preference AS model_preference,
-                   r.dispatched_by AS dispatched_by
-            LIMIT 1
-        """
-        result = await session.run(query, name=name)
-        rec = await result.single()
+    query = """
+        MATCH (r:SubagentRole)
+        WHERE r.name = $name
+           OR r.role_id = $name
+           OR r.role_id = 'ROL-' + toUpper(replace($name, 'writ-', '')) + '-001'
+        RETURN r.role_id AS role_id, r.name AS name,
+               r.prompt_template AS prompt_template,
+               r.model_preference AS model_preference,
+               r.dispatched_by AS dispatched_by
+        LIMIT 1
+    """
+    role_rows = _db._execute_query(query, {"name": name})
+    rec = role_rows[0] if role_rows else None
     if rec is None:
         return {"error": f"SubagentRole '{name}' not found."}
     return {

@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
     from writ.retrieval.pipeline import RetrievalPipeline
     from writ.retrieval.traversal import AdjacencyCache
 
@@ -37,7 +37,7 @@ class RuleIdCollisionError(Exception):
 
 async def check_id_collision(
     rule_id: str,
-    db: Neo4jConnection,
+    db: FalkorDBLiteConnection,
 ) -> None:
     """Fail fast if `rule_id` already exists in Neo4j.
 

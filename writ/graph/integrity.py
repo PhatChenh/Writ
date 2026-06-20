@@ -7,11 +7,11 @@ Per PY-ASYNC-001: all operations are async.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from neo4j import AsyncDriver
+    from writ.graph.db import FalkorDBLiteConnection
 
 from writ.graph.schema import REDUNDANCY_SIMILARITY_THRESHOLD
 
@@ -19,9 +19,8 @@ from writ.graph.schema import REDUNDANCY_SIMILARITY_THRESHOLD
 class IntegrityChecker:
     """Runs integrity checks against the rule graph."""
 
-    def __init__(self, driver: AsyncDriver, database: str = "neo4j") -> None:
-        self._driver = driver
-        self._database = database
+    def __init__(self, db: "FalkorDBLiteConnection") -> None:
+        self._db = db
 
     async def detect_conflicts(self) -> list[dict]:
         """Find all rule pairs connected by CONFLICTS_WITH edges."""
@@ -31,9 +30,7 @@ class IntegrityChecker:
             RETURN a.rule_id AS rule_a, b.rule_id AS rule_b
             ORDER BY rule_a
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(query)
-            return [record.data() async for record in result]
+        return self._db._execute_query(query)
 
     async def detect_orphans(self) -> list[str]:
         """Find rules with zero edges (unreachable by traversal)."""
@@ -43,9 +40,7 @@ class IntegrityChecker:
             RETURN r.rule_id AS rule_id
             ORDER BY rule_id
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(query)
-            return [record["rule_id"] async for record in result]
+        return [row["rule_id"] for row in self._db._execute_query(query)]
 
     async def detect_stale(self) -> list[dict]:
         """Find rules past their staleness window."""
@@ -58,24 +53,20 @@ class IntegrityChecker:
                    r.last_validated AS last_validated,
                    r.staleness_window AS staleness_window
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(query)
-            stale: list[dict] = []
-            async for record in result:
-                data = record.data()
-                last_val = data["last_validated"]
-                window = data["staleness_window"]
-                # Neo4j stores dates as strings from our migration.
-                if isinstance(last_val, str):
-                    last_val = date.fromisoformat(last_val)
-                expiry = last_val + timedelta(days=int(window))
-                if expiry < today:
-                    stale.append({
-                        "rule_id": data["rule_id"],
-                        "last_validated": str(last_val),
-                        "expired_on": str(expiry),
-                    })
-            return stale
+        stale: list[dict] = []
+        for row in self._db._execute_query(query):
+            last_val = row["last_validated"]
+            window = row["staleness_window"]
+            if isinstance(last_val, str):
+                last_val = date.fromisoformat(last_val)
+            expiry = last_val + timedelta(days=int(window))
+            if expiry < today:
+                stale.append({
+                    "rule_id": row["rule_id"],
+                    "last_validated": str(last_val),
+                    "expired_on": str(expiry),
+                })
+        return stale
 
     async def detect_redundant(self) -> list[dict]:
         """Find rule pairs with near-identical trigger+statement text.
@@ -89,9 +80,7 @@ class IntegrityChecker:
                    r.trigger AS trigger,
                    r.statement AS statement
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(query)
-            rules = [record.data() async for record in result]
+        rules = self._db._execute_query(query)
 
         if len(rules) < 2:
             return []
@@ -146,17 +135,13 @@ class IntegrityChecker:
             RETURN r.rule_id AS rule_id
             ORDER BY rule_id
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(query)
-            return [record["rule_id"] async for record in result]
+        return [row["rule_id"] for row in self._db._execute_query(query)]
 
     async def check_query_rule_ratio(self, query_count: int) -> dict | None:
         """Warn if ground-truth query-to-rule ratio drops below 1:10."""
         query = "MATCH (r:Rule) WHERE r.mandatory IS NULL OR r.mandatory = false RETURN count(r) AS count"
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(query)
-            record = await result.single()
-            rule_count = record["count"]
+        rows = self._db._execute_query(query)
+        rule_count = rows[0]["count"] if rows else 0
 
         ratio_threshold = 10
         if rule_count > 0 and query_count * ratio_threshold < rule_count:
@@ -185,14 +170,11 @@ class IntegrityChecker:
             WHERE r.authority = 'ai-provisional'
             RETURN count(r) AS unreviewed
         """
-        async with self._driver.session(database=self._database) as session:
-            total_result = await session.run(total_query)
-            total_record = await total_result.single()
-            total = total_record["total"]
+        total_rows = self._db._execute_query(total_query)
+        total = total_rows[0]["total"] if total_rows else 0
 
-            unreviewed_result = await session.run(unreviewed_query)
-            unreviewed_record = await unreviewed_result.single()
-            unreviewed = unreviewed_record["unreviewed"]
+        unreviewed_rows = self._db._execute_query(unreviewed_query)
+        unreviewed = unreviewed_rows[0]["unreviewed"] if unreviewed_rows else 0
 
         if unreviewed == 0:
             return None
@@ -215,17 +197,15 @@ class IntegrityChecker:
         AND (last_seen is NULL OR last_seen < now - window_days).
         Supplements the existing staleness_window / last_validated check.
         """
+        cutoff = (datetime.now() - timedelta(days=window_days)).isoformat()
         query = """
             MATCH (r:Rule)
             WHERE (coalesce(r.times_seen_positive, 0) + coalesce(r.times_seen_negative, 0)) = 0
-              AND (r.last_seen IS NULL
-                   OR r.last_seen < datetime() - duration({days: $window_days}))
+              AND (r.last_seen IS NULL OR r.last_seen < $cutoff)
             RETURN r.rule_id AS rule_id, r.last_seen AS last_seen
             ORDER BY rule_id
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(query, window_days=window_days)
-            return [record.data() async for record in result]
+        return self._db._execute_query(query, {"cutoff": cutoff})
 
     async def detect_graduation_flags(self) -> list[dict]:
         """Find rules that reached graduation threshold with ratio below minimum.
@@ -246,11 +226,9 @@ class IntegrityChecker:
                    coalesce(r.times_seen_positive, 0) AS pos,
                    coalesce(r.times_seen_negative, 0) AS neg
         """
-        async with self._driver.session(database=self._database) as session:
-            result = await session.run(
-                query, threshold=DEFAULT_GRADUATION_THRESHOLD,
-            )
-            records = [record.data() async for record in result]
+        records = self._db._execute_query(
+            query, {"threshold": DEFAULT_GRADUATION_THRESHOLD},
+        )
 
         flagged: list[dict] = []
         for rec in records:

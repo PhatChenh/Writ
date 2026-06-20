@@ -1,9 +1,9 @@
 [project]
 name = "claude-writ"
 version = "1.5.0"
-description = "Hybrid RAG rule retrieval and session-aware workflow enforcement for Claude Code: a five-stage hybrid pipeline (BM25 + ANN + graph + RRF) over a Neo4j knowledge graph, wired into Claude Code via 30 hook scripts and a state machine."
+description = "Hybrid RAG rule retrieval and session-aware workflow enforcement for Claude Code: a five-stage hybrid pipeline (BM25 + ANN + graph + RRF) over a FalkorDBLite knowledge graph, wired into Claude Code via 30 hook scripts and a state machine."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -14,7 +14,7 @@ keywords = [
     "rag",
     "rules",
     "enforcement",
-    "neo4j",
+    "falkordb",
     "fastapi",
     "hooks",
     "workflow",
@@ -28,7 +28,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -42,7 +41,7 @@ dependencies = [
     # explicitly opts in via WRIT_ALLOW_EMBEDDING_FALLBACK=1.
     "fastapi>=0.115,<1",
     "uvicorn>=0.32,<1",
-    "neo4j>=5.0,<6",
+    "falkordb>=1.0,<2",
     "tantivy>=0.22,<1",
     "hnswlib>=0.8,<1",
     "httpx>=0.27,<1",
