@@ -2,6 +2,32 @@
 # Shared library for phaselock bin/ scripts and hooks.
 # Source this file: source "$(dirname "$0")/lib/common.sh"
 
+# ── Python interpreter resolution (py3.12 pin) ──────────────────────────────
+# Hook helpers (writ-session.py, parse-hook-stdin.py, …) use 3.10+ syntax
+# (`str | None`). A bare `python3` can be the system 3.9 (macOS), which fails
+# to IMPORT them → the hook's gate silently falls open. Resolve a known-good
+# interpreter ONCE and route every `python3` call — in this lib AND in every
+# sourcing hook — through it via a wrapper function. Order: bootstrap venv →
+# versioned interpreters → bare python3 (last resort). Override: WRIT_PYTHON=…
+_writ_resolve_python() {
+    local data="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}" cand
+    for cand in "$data/.venv/bin/python" "$data/.venv/bin/python3" python3.12 python3.11 python3; do
+        command -v "$cand" >/dev/null 2>&1 || continue
+        # PROBE: the candidate must actually run AND be >=3.11. A bare
+        # `command -v` is not enough — a pyenv shim can exist yet fail to run
+        # ("pyenv: python3.X: command not found") when no matching version is set.
+        "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1 \
+            && { printf '%s\n' "$cand"; return 0; }
+    done
+    printf 'python3\n'  # last resort (may be <3.11); better than empty
+}
+WRIT_PYTHON="${WRIT_PYTHON:-$(_writ_resolve_python)}"
+# Transparent wrapper. Calls the RESOLVED interpreter via `command` (which
+# bypasses functions), so even the python3 fallback does not recurse. NOTE:
+# `bash -c "…"` children (e.g. the test runners in run-pending-verification) do
+# NOT inherit this function — correct: project test commands keep their own python.
+python3() { command "$WRIT_PYTHON" "$@"; }
+
 # ── Hook stdin envelope parser ──────────────────────────────────────────────
 # Reads the Claude Code hook stdin envelope and normalizes it into a JSON
 # object with flattened fields (file_path, content, tool_name, is_error, etc.).
