@@ -3,7 +3,7 @@
 The 60-file methodology corpus moved from
 `tests/fixtures/synthetic_methodology/` to `bible/methodology/` in
 this commit. Migration runs against the new location to populate
-Neo4j with Skill / Playbook / Technique / AntiPattern / Role /
+the graph with Skill / Playbook / Technique / AntiPattern / Role /
 ForbiddenResponse / Phase / Rationalization / PressureScenario /
 WorkedExample / SubagentRole nodes.
 
@@ -17,7 +17,7 @@ Tests verify:
      update coupled to the code change).
 
 Migration smoke (running the migrate script + asserting against the
-live Neo4j) is verified out-of-band via curl /health, not in this
+live graph DB) is verified out-of-band via curl /health, not in this
 test suite, because integration tests against a running daemon
 belong with the integration harness, not unit pytest.
 """

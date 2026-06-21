@@ -47,7 +47,7 @@ ALLOWED_EDGE_TYPES: frozenset[str] = frozenset({
 })
 
 
-def _coerce_neo4j_value(v):
+def _coerce_value(v):
     """Convert Python objects to FalkorDB-compatible property values.
 
     Dates → ISO strings. Nested dicts → JSON strings (FalkorDB doesn't store maps
@@ -164,7 +164,7 @@ class FalkorDBLiteConnection:
 
         This is the ONLY place that knows about FalkorDB's result format.
         All callers get back list[dict] with string keys — same contract
-        as the old Neo4j record.data() pattern.
+        as the canonical record-dict pattern.
         """
         result = self._graph.query(cypher, params=params or {})
         if not result.result_set:
@@ -198,7 +198,7 @@ class FalkorDBLiteConnection:
             SET r += $props
             RETURN r.rule_id AS rule_id
         """
-        props = {k: _coerce_neo4j_value(v) for k, v in rule_data.items() if k != "rule_id"}
+        props = {k: _coerce_value(v) for k, v in rule_data.items() if k != "rule_id"}
         rows = self._execute_query(query, {"rule_id": rule_data["rule_id"], "props": props})
         return rows[0]["rule_id"]
 
@@ -231,7 +231,7 @@ class FalkorDBLiteConnection:
         if id_field not in data:
             raise ValueError(f"{node_type} data missing required {id_field}")
         node_id = data[id_field]
-        props = {k: _coerce_neo4j_value(v) for k, v in data.items() if k != id_field}
+        props = {k: _coerce_value(v) for k, v in data.items() if k != id_field}
         query = f"""
             MERGE (n:{node_type} {{{id_field}: $node_id}})
             SET n += $props
@@ -245,17 +245,46 @@ class FalkorDBLiteConnection:
         max_hops = 3
         if not (1 <= hops <= max_hops):
             raise ValueError(f"hops must be between 1 and {max_hops}")
-        query = f"""
-            MATCH (start:Rule {{rule_id: $rule_id}})-[rel*1..{hops}]-(neighbor:Rule)
-            WITH neighbor, rel
-            UNWIND rel AS r
+
+        # Single-hop fast path: simple edge match.
+        one_hop_query = """
+            MATCH (start:Rule {rule_id: $rule_id})-[rel]-(neighbor:Rule)
             RETURN DISTINCT
                 neighbor.rule_id AS rule_id,
-                type(r) AS edge_type,
-                startNode(r).rule_id AS from_id,
-                endNode(r).rule_id AS to_id
+                type(rel) AS edge_type,
+                startNode(rel).rule_id AS from_id,
+                endNode(rel).rule_id AS to_id
         """
-        return self._execute_query(query, {"rule_id": rule_id})
+        rows = self._execute_query(one_hop_query, {"rule_id": rule_id})
+        if hops == 1:
+            return rows
+
+        # Multi-hop: iterative BFS in Python.  FalkorDB variable-length
+        # path syntax [rel*1..N] returns a Path object that cannot be
+        # UNWIND-ed, so we expand hop-by-hop.
+        seen: set[str] = {rule_id}
+        for row in rows:
+            seen.add(row["rule_id"])
+        results: list[dict] = list(rows)
+        frontier: set[str] = {row["rule_id"] for row in rows}
+
+        for _ in range(2, hops + 1):
+            next_frontier: set[str] = set()
+            for current_id in frontier:
+                neighbor_rows = self._execute_query(
+                    one_hop_query, {"rule_id": current_id}
+                )
+                for row in neighbor_rows:
+                    nid = row["rule_id"]
+                    if nid not in seen:
+                        seen.add(nid)
+                        next_frontier.add(nid)
+                        results.append(row)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return results
 
     async def count_rules(self) -> int:
         """Return total Rule node count."""
@@ -327,7 +356,13 @@ class FalkorDBLiteConnection:
         if not rows:
             return None
         data = rows[0]["a"]
-        data["members"] = [m for m in rows[0]["members"]]
+        # Normalize members: FalkorDB returns Node objects; convert to
+        # property dicts so callers can subscript with field names.
+        raw_members = rows[0]["members"]
+        data["members"] = [
+            m.properties if hasattr(m, "properties") else m
+            for m in raw_members
+        ]
         return data
 
     async def delete_abstractions(self) -> int:
@@ -394,12 +429,49 @@ class FalkorDBLiteConnection:
                     raise
 
     async def list_constraints(self) -> list[dict]:
-        """Return all constraints. For verification/testing."""
-        return self._execute_query("CALL db.constraints()")
+        """Return all constraints normalized to a stable, canonical format.
+
+        FalkorDB's CALL db.constraints() returns {type, label, properties,
+        entitytype, status}; the canonical shape is {name, type, entityType, ...}.
+        We synthesize a ``name`` key so existing tests pass unchanged.
+        """
+        raw = self._execute_query("CALL db.constraints()")
+        out: list[dict] = []
+        for c in raw:
+            label = c.get("label", "")
+            props = c.get("properties", [])
+            prop_str = "_".join(props) if props else ""
+            name = f"{prop_str}_unique" if prop_str else ""
+            out.append({
+                "name": name,
+                "type": c.get("type", ""),
+                "label": label,
+                "properties": props,
+            })
+        return out
 
     async def list_indexes(self) -> list[dict]:
-        """Return all indexes. For verification/testing."""
-        return self._execute_query("CALL db.indexes()")
+        """Return all indexes normalized to a stable, canonical format.
+
+        FalkorDB's CALL db.indexes() returns {label, properties, types,
+        entitytype, status, ...}; the canonical shape is {name, type, entityType, ...}.
+        We synthesize a ``name`` key so existing tests pass unchanged.
+        """
+        raw = self._execute_query("CALL db.indexes()")
+        out: list[dict] = []
+        seen: set[str] = set()
+        for ix in raw:
+            label = ix.get("label", "")
+            for prop in ix.get("properties", []):
+                name = f"{label}_{prop}".lower()
+                if name not in seen:
+                    seen.add(name)
+                    out.append({
+                        "name": name,
+                        "label": label,
+                        "properties": ix.get("properties", []),
+                    })
+        return out
 
     async def get_rules_by_authority(self, authority: str) -> list[dict]:
         """Fetch all Rule nodes with a given authority value."""

@@ -33,25 +33,13 @@ debug() {
 STDIN_JSON=$(cat)
 debug "stdin: ${STDIN_JSON:0:200}"
 
-# Auto-start: ensure Neo4j and Writ server are running.
+# Auto-start: ensure Writ server is running.
 # Uses a lockfile to prevent multiple hooks from racing to start the server.
 if ! curl -sf --connect-timeout 0.2 "$WRIT_HEALTH_URL" >/dev/null 2>&1; then
     debug "server down, attempting auto-start"
     # Acquire lock (non-blocking; if another hook is already starting, wait for it)
     if ( set -o noclobber; echo $$ > "$WRIT_LOCKFILE" ) 2>/dev/null; then
         trap 'rm -f "$WRIT_LOCKFILE"' EXIT
-
-        # Ensure Neo4j is running (docker restart is a no-op if already up)
-        if command -v docker >/dev/null 2>&1; then
-            docker start writ-neo4j >/dev/null 2>&1 || true
-            # Wait up to 8s for Neo4j HTTP port
-            for _i in $(seq 1 16); do
-                if curl -sf --connect-timeout 0.1 http://localhost:7474 >/dev/null 2>&1; then
-                    break
-                fi
-                sleep 0.5
-            done
-        fi
 
         # Start Writ server in background
         if [ -f "$VENV_DIR/bin/python3" ]; then

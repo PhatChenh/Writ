@@ -257,7 +257,7 @@ class JustifiedBy(BaseModel):
 
 # --- Methodology node types (signed off 2026-04-21) ---
 # Ingest parser populates these from <!-- NODE START type=X id=Y --> markers
-# in markdown fixtures. Neo4j migration creates a label per node_type and a
+# in markdown fixtures. Graph migration creates a label per node_type and a
 # relationship type per new edge class.
 
 
@@ -485,7 +485,7 @@ class SubagentRole(_NonRetrievableBase):
 # --- New edge types per plan Section 3.1 ---
 # 8 new directed edges (6 new + PRECEDES and CONTAINS-family already implied by
 # existing _DirectedEdge pattern). Each extends _DirectedEdge for shared endpoint
-# validation. Neo4j relationship type matches class name uppercased-with-underscores
+# validation. Graph relationship type matches class name uppercased-with-underscores
 # (e.g. PressureTests → PRESSURE_TESTS).
 
 

@@ -1,6 +1,6 @@
-"""Tests for the non-tech-user bootstrap: scripts/bootstrap.sh + docker-compose.yml.
+"""Tests for the non-tech-user bootstrap: scripts/bootstrap.sh + ensure-server.sh.
 
-These are source-inspection tests (no real Docker/pip invocation). They verify
+These are source-inspection tests (no real brew/pip invocation). They verify
 that the bootstrap script contains every required section and that the supporting
 infrastructure files exist with the expected shape. Shell execution is exercised
 only where a mock PATH + tmp dirs keep it safe.
@@ -36,8 +36,10 @@ class TestFilePresence:
     def test_bootstrap_is_executable(self) -> None:
         assert os.access(BOOTSTRAP, os.X_OK), "scripts/bootstrap.sh must be executable"
 
-    def test_docker_compose_exists(self) -> None:
-        assert COMPOSE_FILE.exists(), "docker-compose.yml must exist at repo root"
+    def test_docker_compose_does_not_exist(self) -> None:
+        assert not COMPOSE_FILE.exists(), (
+            "docker-compose.yml must NOT exist — it was deleted in Phase 2 (Neo4j → FalkorDBLite)"
+        )
 
     def test_install_skill_is_deleted(self) -> None:
         assert not INSTALL_SKILL.exists(), (
@@ -67,11 +69,11 @@ class TestBootstrapSections:
             "bootstrap.sh must check for python3 >= 3.11"
         )
 
-    def test_bootstrap_checks_docker_prerequisite(self, content: str) -> None:
-        assert "docker" in content.lower()
-        # Must verify docker daemon is reachable, not just the binary
-        assert "docker info" in content or "docker ps" in content, (
-            "bootstrap.sh must verify the Docker daemon is running"
+    def test_bootstrap_checks_brew_prerequisite(self, content: str) -> None:
+        assert "brew" in content.lower()
+        # Must verify Homebrew is available, not just the binary
+        assert "require_tool brew" in content or "command -v brew" in content, (
+            "bootstrap.sh must verify Homebrew is available"
         )
 
     def test_bootstrap_checks_envsubst_prerequisite(self, content: str) -> None:
@@ -128,14 +130,16 @@ class TestBootstrapSections:
             "bootstrap.sh must handle both rules/ and agents/ directories"
         )
 
-    def test_bootstrap_starts_neo4j_via_compose(self, content: str) -> None:
-        assert "docker compose up" in content or "docker-compose up" in content, (
-            "bootstrap.sh must start Neo4j via docker compose, not raw docker run"
+    def test_bootstrap_ensures_redis(self, content: str) -> None:
+        assert "redis" in content.lower(), (
+            "bootstrap.sh must ensure Redis is available (install via Homebrew if needed)"
         )
 
-    def test_bootstrap_waits_for_neo4j(self, content: str) -> None:
-        # Waits for bolt port or healthcheck
-        assert "7687" in content, "bootstrap.sh must wait for Neo4j bolt port"
+    def test_bootstrap_downloads_falkordb_module(self, content: str) -> None:
+        # Downloads falkordb-macos-arm64v8.so from GitHub releases
+        assert "falkordb" in content.lower(), (
+            "bootstrap.sh must download the FalkorDB module (falkordb.so)"
+        )
 
     def test_bootstrap_ingests_rules(self, content: str) -> None:
         assert "import-markdown" in content, (
@@ -155,55 +159,25 @@ class TestBootstrapSections:
         )
 
 
-# ---------------------------------------------------------------------------
-# docker-compose.yml shape
-# ---------------------------------------------------------------------------
-
-
-class TestDockerCompose:
-    @pytest.fixture
-    def content(self) -> str:
-        return COMPOSE_FILE.read_text()
-
-    def test_declares_neo4j_service(self, content: str) -> None:
-        assert "neo4j" in content, "docker-compose.yml must declare a neo4j service"
-
-    def test_exposes_bolt_port(self, content: str) -> None:
-        assert "7687" in content, "docker-compose.yml must expose bolt port 7687"
-
-    def test_has_named_volume(self, content: str) -> None:
-        assert "volumes" in content and ("/data" in content or "data:" in content), (
-            "docker-compose.yml must declare a named volume for /data"
-        )
-
-    def test_has_healthcheck(self, content: str) -> None:
-        assert "healthcheck" in content, (
-            "docker-compose.yml must declare a healthcheck for Neo4j"
-        )
-
-    def test_has_restart_policy(self, content: str) -> None:
-        assert "restart" in content, (
-            "docker-compose.yml must declare a restart policy"
-        )
 
 
 # ---------------------------------------------------------------------------
-# ensure-server.sh must use docker compose, not raw docker run
+# ensure-server.sh must use writ serve, not docker compose
 # ---------------------------------------------------------------------------
 
 
 class TestEnsureServerMigration:
-    def test_ensure_server_uses_compose(self) -> None:
+    def test_ensure_server_uses_writ_serve(self) -> None:
         content = ENSURE_SERVER.read_text()
-        assert "docker compose" in content or "docker-compose" in content, (
-            "ensure-server.sh must use docker compose (not raw `docker run`) for Neo4j"
+        assert "writ serve" in content, (
+            "ensure-server.sh must use `nohup writ serve` for the Writ daemon"
         )
 
-    def test_ensure_server_not_raw_docker_run(self) -> None:
+    def test_ensure_server_not_docker(self) -> None:
         content = ENSURE_SERVER.read_text()
-        # Raw `docker run -d ... neo4j:5` invocation should be gone
-        assert "docker run -d" not in content or "neo4j:5" not in content, (
-            "ensure-server.sh must not use raw `docker run -d neo4j:5`; use compose"
+        # Docker / docker-compose references should be gone — uses writ serve directly
+        assert "docker" not in content.lower(), (
+            "ensure-server.sh must not reference Docker; it uses writ serve directly"
         )
 
 
@@ -236,26 +210,26 @@ class TestBootstrapPrerequisiteChecks:
 
     def test_fails_cleanly_when_python3_missing(self, tmp_path: Path) -> None:
         # bash is needed to run the script itself, but python3 is omitted
-        result = self._run_with_limited_path(tmp_path, ["bash", "docker", "git"])
+        result = self._run_with_limited_path(tmp_path, ["bash", "brew", "git", "envsubst"])
         assert result.returncode != 0, "bootstrap must fail when python3 is missing"
         combined = (result.stdout + result.stderr).lower()
         assert "python" in combined, "error message must mention python"
 
-    def test_fails_cleanly_when_docker_missing(self, tmp_path: Path) -> None:
-        result = self._run_with_limited_path(tmp_path, ["bash", "python3", "git"])
-        assert result.returncode != 0, "bootstrap must fail when docker is missing"
+    def test_fails_cleanly_when_brew_missing(self, tmp_path: Path) -> None:
+        result = self._run_with_limited_path(tmp_path, ["bash", "python3", "git", "envsubst"])
+        assert result.returncode != 0, "bootstrap must fail when brew is missing"
         combined = (result.stdout + result.stderr).lower()
-        assert "docker" in combined, "error message must mention docker"
+        assert "brew" in combined, "error message must mention brew"
 
     def test_fails_cleanly_when_git_missing(self, tmp_path: Path) -> None:
-        result = self._run_with_limited_path(tmp_path, ["bash", "python3", "docker"])
+        result = self._run_with_limited_path(tmp_path, ["bash", "python3", "brew", "envsubst"])
         assert result.returncode != 0, "bootstrap must fail when git is missing"
         combined = (result.stdout + result.stderr).lower()
         assert "git" in combined, "error message must mention git"
 
     def test_fails_cleanly_when_envsubst_missing(self, tmp_path: Path) -> None:
         result = self._run_with_limited_path(
-            tmp_path, ["bash", "python3", "docker", "git"]
+            tmp_path, ["bash", "python3", "brew", "git"]
         )
         assert result.returncode != 0, "bootstrap must fail when envsubst is missing"
         combined = (result.stdout + result.stderr).lower()

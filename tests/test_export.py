@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-import pytest_asyncio
 
 from writ.export import (
     GRAPH_ONLY_FIELDS,
@@ -339,23 +338,11 @@ class TestRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Integration: Neo4j export (requires running Neo4j)
+# Integration: graph export (requires the embedded FalkorDB)
 # ---------------------------------------------------------------------------
 
-class TestExportWithNeo4j:
-    """Tests that require a live Neo4j instance."""
-
-    @pytest_asyncio.fixture()
-    async def db(self):
-        """Provide a Neo4j connection, clear before and after."""
-        from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-        from writ.graph.db import Neo4jConnection
-
-        conn = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
-        await conn.clear_all()
-        yield conn
-        await conn.clear_all()
-        await conn.close()
+class TestExportWithDB:
+    """Tests that require a live graph instance."""
 
     @pytest.mark.asyncio()
     async def test_export_creates_files(
@@ -411,10 +398,10 @@ class TestExportWithNeo4j:
         assert ts is not None
 
     @pytest.mark.asyncio()
-    async def test_full_round_trip_through_neo4j(
+    async def test_full_round_trip_through_db(
         self, db, valid_rule_data: dict, tmp_path: Path
     ) -> None:
-        """Write to Neo4j -> export -> re-ingest from files -> compare."""
+        """Write to graph DB -> export -> re-ingest from files -> compare."""
         await db.create_rule(valid_rule_data)
         await export_rules_to_markdown(db, tmp_path)
 

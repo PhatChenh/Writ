@@ -4,7 +4,7 @@ Measures all metrics from HANDBOOK.md Section "By the numbers". These are
 pass/fail gates: if any target is missed, the pipeline must be re-architected
 before proceeding to Phases 6-9.
 
-Requires Neo4j running with migrated rules (80-rule corpus).
+Requires FalkorDB running with migrated rules (80-rule corpus).
 Does NOT clear the database -- reads from migrated state only.
 
 Run with: pytest benchmarks/bench_targets.py -v -s
@@ -25,8 +25,8 @@ from tests.fixtures.regression_floors import (
     HIT_RATE_FLOOR,
     MRR5_FLOOR,
 )
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_graph, get_falkordb_module, get_falkordb_path, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 from writ.graph.ingest import validate_parsed_rule
 from writ.graph.integrity import IntegrityChecker
 from writ.retrieval.pipeline import build_pipeline
@@ -41,9 +41,6 @@ from writ.retrieval.ranking import (
 # module-scoped async fixtures (db, pipeline) work correctly.
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
 
 GROUND_TRUTH_PATH = Path("tests/fixtures/ground_truth_queries.json")
 
@@ -87,11 +84,16 @@ BENCHMARK_ITERATIONS = 100
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def db():
-    """Shared Neo4j connection. Does NOT clear the database."""
-    conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    """Shared FalkorDB connection. Does NOT clear the database."""
+    conn = FalkorDBLiteConnection(
+        db_path=get_falkordb_path(),
+        graph=get_falkordb_graph(),
+        module_path=get_falkordb_module(),
+        redis_bin=get_redis_bin(),
+    )
     count = await conn.count_rules()
     if count == 0:
-        pytest.skip("Neo4j has no rules. Run: `writ import-markdown`")
+        pytest.skip("FalkorDB has no rules. Run: `writ import-markdown`")
     yield conn
     await conn.close()
 
@@ -117,7 +119,7 @@ def ground_truth():
 class TestIntegrityBenchmark:
 
     async def test_integrity_check_duration(self, db) -> None:
-        checker = IntegrityChecker(db._driver, db._database)
+        checker = IntegrityChecker(db)
 
         latencies: list[float] = []
         for _ in range(10):
@@ -180,9 +182,7 @@ class TestIngestionBenchmark:
             latencies.append(elapsed_s)
 
         # Clean up synthetic rule so it doesn't leak into the production graph.
-        query = "MATCH (r:Rule {rule_id: $rule_id}) DETACH DELETE r"
-        async with db._driver.session(database=db._database) as session:
-            await session.run(query, rule_id="BENCH-INGEST-001")
+        await db.delete_rule("BENCH-INGEST-001")
 
         latencies.sort()
         p95_idx = int(len(latencies) * 0.95)
@@ -306,19 +306,10 @@ class TestRetrievalPrecision:
         276-rule corpus; floor at 90% leaves ~4.5pp headroom and surfaces
         a regression of ~7 queries before failing.
         """
-        import asyncio
-
-        async def _domains() -> dict[str, str]:
-            d: dict[str, str] = {}
-            async with db._driver.session(database=db._database) as s:
-                r = await s.run(
-                    "MATCH (r:Rule) RETURN r.rule_id AS id, r.domain AS domain"
-                )
-                async for rec in r:
-                    d[rec["id"]] = rec["domain"] or ""
-            return d
-
-        rule_domains = asyncio.get_event_loop().run_until_complete(_domains())
+        rows = db._execute_query(
+            "MATCH (r:Rule) RETURN r.rule_id AS id, r.domain AS domain"
+        )
+        rule_domains = {row["id"]: row["domain"] or "" for row in rows}
 
         hits = 0
         total = 0

@@ -15,23 +15,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 from writ.graph.methodology_ingest import ingest_path
-
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
 
 _METH_TYPES = {"Skill", "Playbook", "Technique", "AntiPattern", "ForbiddenResponse",
                "Phase", "Rationalization", "PressureScenario", "WorkedExample", "SubagentRole"}
 
 
 async def _ingest(dir_: Path, only: set[str] | None, dry_run: bool,
-                  db: Neo4jConnection | None = None) -> None:
+                  db: FalkorDBLiteConnection | None = None) -> None:
     owned = db is None
     if owned:
-        db = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+        db = FalkorDBLiteConnection(
+            get_falkordb_path(), get_falkordb_graph(),
+            get_falkordb_module(), get_redis_bin(),
+        )
     try:
         report = await ingest_path(dir_, db, only=only, dry_run=dry_run)
         print(report.render())
@@ -48,13 +47,13 @@ async def run_migration(bible_dir: Path, dry_run: bool = False) -> None:
 
 
 async def run_methodology_migration(fixtures_dir: Path, dry_run: bool = False,
-                                    db: Neo4jConnection | None = None) -> None:
+                                    db: FalkorDBLiteConnection | None = None) -> None:
     """Methodology-only migration. Delegates to ingest_path with methodology types."""
     await _ingest(fixtures_dir, _METH_TYPES, dry_run, db=db)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Migrate Markdown nodes into Neo4j graph.")
+    parser = argparse.ArgumentParser(description="Migrate Markdown nodes into the graph.")
     parser.add_argument("--bible-dir", type=Path, default=Path("bible/"))
     parser.add_argument("--methodology-dir", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")

@@ -19,7 +19,6 @@ import asyncio
 import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -30,39 +29,42 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Shared resolver -- one source of truth for invoking `writ` from tests.
 from tests._writ_cmd import WRIT_CMD_PREFIX as _WRIT_CMD_PREFIX, WRIT_CLI
 
-# Read Neo4j credentials from writ.toml instead of hardcoding them.
-with open(REPO_ROOT / "writ.toml", "rb") as _f:
-    _writ_config = tomllib.load(_f)
-NEO4J_PASSWORD = _writ_config["neo4j"]["password"]
-NEO4J_USER = _writ_config["neo4j"]["user"]
-
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
+_prod_db = None
+
+
+def _get_prod_db():
+    """Lazily create and cache a FalkorDBLiteConnection to the production graph."""
+    global _prod_db
+    if _prod_db is None:
+        from writ.config import (
+            get_falkordb_path,
+            get_falkordb_graph,
+            get_falkordb_module,
+            get_redis_bin,
+        )
+        from writ.graph.db import FalkorDBLiteConnection
+
+        _prod_db = FalkorDBLiteConnection(
+            db_path=get_falkordb_path(),
+            graph=get_falkordb_graph(),
+            module_path=get_falkordb_module(),
+            redis_bin=get_redis_bin(),
+        )
+    return _prod_db
+
+
 def _cypher(query: str) -> int:
-    """Run a read-only Cypher query via docker exec and return the integer result."""
-    result = subprocess.run(
-        [
-            "docker", "exec", "writ-neo4j", "cypher-shell",
-            "-u", NEO4J_USER, "-p", NEO4J_PASSWORD,
-            "--format", "plain",
-            query,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"Neo4j not reachable: {result.stderr[:200]}")
-    lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
-    for line in reversed(lines):
-        try:
-            return int(line)
-        except ValueError:
-            continue
-    pytest.skip(f"Could not parse cypher output: {result.stdout!r}")
+    """Run a read-only Cypher query via FalkorDB and return the integer result."""
+    db = _get_prod_db()
+    rows = db._execute_query(query)
+    if rows:
+        return int(list(rows[0].values())[0])
+    pytest.skip(f"Cypher query returned no rows: {query!r}")
 
 
 def _run_import(*args: str, cwd: Path = SKILL_DIR) -> subprocess.CompletedProcess:
@@ -78,19 +80,8 @@ def _run_import(*args: str, cwd: Path = SKILL_DIR) -> subprocess.CompletedProces
 
 def _clear_graph() -> None:
     """Wipe the graph so each test starts from a clean slate."""
-    result = subprocess.run(
-        [
-            "docker", "exec", "writ-neo4j", "cypher-shell",
-            "-u", NEO4J_USER, "-p", NEO4J_PASSWORD,
-            "--format", "plain",
-            "MATCH (n) DETACH DELETE n",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"Could not clear Neo4j: {result.stderr[:200]}")
+    db = _get_prod_db()
+    db._execute_query("MATCH (n) DETACH DELETE n")
 
 
 # ---------------------------------------------------------------------------
@@ -301,10 +292,10 @@ class TestImportMarkdownOnlyFilter:
 # ---------------------------------------------------------------------------
 
 class TestImportMarkdownDryRun:
-    """--dry-run must parse + validate without writing to Neo4j."""
+    """--dry-run must parse + validate without writing to the graph."""
 
     def test_dry_run_no_writes(self) -> None:
-        """Rule count in Neo4j must be identical before and after --dry-run."""
+        """Rule count in the graph must be identical before and after --dry-run."""
         before = _cypher("MATCH (n:Rule) RETURN count(n)")
         result = _run_import("bible/", "--dry-run")
         assert result.returncode == 0, (

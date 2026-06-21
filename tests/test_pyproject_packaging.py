@@ -103,7 +103,7 @@ class TestPyprojectInstallContract:
 
     def test_python_version_floor_supported(self, pyproject: dict) -> None:
         """Soft sanity: the floor must be a real released CPython that
-        the dependencies (FastAPI, Pydantic v2, neo4j) all support."""
+        the dependencies (FastAPI, Pydantic v2, falkordb) all support."""
         rp = pyproject.get("project", {}).get("requires-python", "")
         assert ">=" in rp, f"requires-python lacks a floor: {rp!r}"
         # Floor of >=3.11 or higher is current writ baseline.

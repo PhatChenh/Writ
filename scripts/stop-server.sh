@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Plugin lifecycle: Shutdown -- stop Writ server gracefully.
 # Called automatically when Claude Code unloads the plugin.
-# Does NOT stop Neo4j (it may be shared with other tools).
+# Does NOT stop the embedded graph DB (it may be shared with other tools).
 
 set -euo pipefail
 

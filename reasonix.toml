@@ -1,0 +1,21 @@
+config_version = 2
+
+[permissions]
+mode  = "allow"
+deny = ["Bash(rm -rf*)", "Bash(git push --force*)", "Bash(git reset --hard*)"]
+allow = [
+  # git — read + worktree management
+  "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
+  "Bash(git branch:*)", "Bash(git show:*)", "Bash(git stash:*)",
+  "Bash(git worktree:*)", "Bash(git rev-parse:*)", "Bash(git check-ignore:*)",
+  # file inspection
+  "Bash(grep:*)", "Bash(find:*)", "Bash(ls:*)", "Bash(cat:*)",
+  "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(echo:*)",
+  "Bash(which:*)", "Bash(type:*)", "Bash(file:*)",
+  # python / uv
+  "Bash(python3:*)", "Bash(uv run ruff check:*)", "Bash(uv run pytest:*)",
+  "Bash(uv run python:*)", "Bash(uv sync:*)",
+  # misc
+  "Bash(curl:*)", "Bash(jq:*)", "Bash(sort:*)", "Bash(uniq:*)",
+  "Bash(awk:*)", "Bash(sed:*)", "Bash(xargs:*)", "Bash(base64:*)"
+]

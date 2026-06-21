@@ -3,7 +3,7 @@
 Tests writ add / writ edit logic: field validation, relationship suggestion,
 redundancy detection, conflict warning, and graph writes.
 
-Requires Neo4j running with migrated rules.
+Requires FalkorDB running with migrated rules.
 """
 
 from __future__ import annotations
@@ -11,53 +11,61 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
 from writ.graph.ingest import discover_rule_files, parse_rules_from_file
 from writ.graph.schema import Rule
 from writ.retrieval.pipeline import build_pipeline
 from writ.retrieval.traversal import AdjacencyCache
 
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
+async def db(_session_db):
+    """Module-scoped db pre-loaded with bible rules for pipeline/cache.
 
-
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def db():
-    """Shared db with migrated rules."""
+    Uses the shared session connection but loads bible data once at
+    module scope so pipeline and cache (also module-scoped) can be
+    built from a populated graph.  The autouse _clear_db wipes the
+    graph between tests, but the in-memory pipeline/cache indexes
+    survive; tests that need graph state create their own data.
+    """
     from pathlib import Path
-
-    conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-    await conn.clear_all()
 
     bible_dir = Path("bible/")
     if bible_dir.exists():
-        rule_ids = set()
+        rule_ids: set[str] = set()
         all_rules: list[dict] = []
         for f in discover_rule_files(bible_dir):
             for rule_data in parse_rules_from_file(f):
                 clean = {k: v for k, v in rule_data.items() if not k.startswith("_")}
-                await conn.create_rule(clean)
+                await _session_db.create_rule(clean)
                 rule_ids.add(clean["rule_id"])
                 all_rules.append(rule_data)
         for rule_data in all_rules:
             for ref_id in rule_data.get("_cross_references", []):
                 if ref_id in rule_ids:
-                    await conn.create_edge("RELATED_TO", rule_data["rule_id"], ref_id)
+                    await _session_db.create_edge("RELATED_TO", rule_data["rule_id"], ref_id)
 
-    yield conn
-    await conn.clear_all()
-    await conn.close()
+    yield _session_db
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
+@pytest_asyncio.fixture(autouse=True, scope="module", loop_scope="session")
+async def _clear_db(_session_db):
+    """Override conftest's function-scoped autouse clear.
+
+    This module pre-loads bible data once at module scope and tests
+    within the module expect accumulated graph state (the original
+    module-scoped fixture design).  Clearing between tests would
+    break pipeline/cache consumers and tests that look up rules
+    loaded by the module fixture.
+    """
+    pass
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
 async def pipeline(db):
     p = await build_pipeline(db)
     yield p
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
 async def cache(db):
     c = AdjacencyCache()
     await c.build_from_db(db)
@@ -122,7 +130,7 @@ class TestAuthoringValidation:
 # ---------------------------------------------------------------------------
 
 class TestRelationshipSuggestion:
-    pytestmark = pytest.mark.asyncio(loop_scope="module")
+    pytestmark = pytest.mark.asyncio()
 
     async def test_suggest_returns_top5(self, pipeline) -> None:
         from writ.authoring import suggest_relationships
@@ -159,7 +167,7 @@ class TestRedundancyDetection:
     Boundary behavior: >= 0.95 is flagged, < 0.95 is not flagged.
     """
 
-    pytestmark = pytest.mark.asyncio(loop_scope="module")
+    pytestmark = pytest.mark.asyncio()
 
     THRESHOLD = 0.95
 
@@ -206,7 +214,7 @@ class TestRedundancyDetection:
 # ---------------------------------------------------------------------------
 
 class TestConflictDetection:
-    pytestmark = pytest.mark.asyncio(loop_scope="module")
+    pytestmark = pytest.mark.asyncio()
 
     async def test_conflict_path_detected(self, db, cache) -> None:
         from writ.authoring import check_conflicts
@@ -245,9 +253,9 @@ class TestConflictDetection:
 # ---------------------------------------------------------------------------
 
 class TestAuthoringGraphWrite:
-    pytestmark = pytest.mark.asyncio(loop_scope="module")
+    pytestmark = pytest.mark.asyncio()
 
-    async def test_add_creates_rule_in_neo4j(self, db) -> None:
+    async def test_add_creates_rule_in_db(self, db) -> None:
         data = _make_new_rule_data()
         data["rule_id"] = "TEST-ADD-001"
         await db.create_rule(data)
@@ -257,9 +265,12 @@ class TestAuthoringGraphWrite:
         assert fetched["domain"] == "Testing"
 
     async def test_add_with_edge_creates_relationship(self, db) -> None:
-        data = _make_new_rule_data()
-        data["rule_id"] = "TEST-ADD-002"
-        await db.create_rule(data)
+        # Create both rules so the edge has valid endpoints (each test
+        # starts with a clean graph thanks to the autouse _clear_db).
+        data_a = {**_make_new_rule_data(), "rule_id": "TEST-ADD-001"}
+        data_b = {**_make_new_rule_data(), "rule_id": "TEST-ADD-002"}
+        await db.create_rule(data_a)
+        await db.create_rule(data_b)
         await db.create_edge("SUPPLEMENTS", "TEST-ADD-002", "TEST-ADD-001")
 
         neighbors = await db.traverse_neighbors("TEST-ADD-002", hops=1)
@@ -272,7 +283,7 @@ class TestAuthoringGraphWrite:
 # ---------------------------------------------------------------------------
 
 class TestAuthoringEdit:
-    pytestmark = pytest.mark.asyncio(loop_scope="module")
+    pytestmark = pytest.mark.asyncio()
 
     async def test_edit_updates_existing_rule(self, db) -> None:
         # Create initial.

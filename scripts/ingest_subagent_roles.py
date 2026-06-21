@@ -1,4 +1,4 @@
-"""Ingest SubagentRole nodes into Neo4j from .claude/agents/*.md.
+"""Ingest SubagentRole nodes into the graph from .claude/agents/*.md.
 
 Phase 3 deliverable 2: the graph becomes the canonical source of subagent
 definitions. scripts/export_subagent_roles.py regenerates the .md files
@@ -23,12 +23,9 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
 AGENTS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "agents"
 FRONT_MATTER = re.compile(r"^---\n(.*?)\n---\n(.*)", re.DOTALL)
 
@@ -111,7 +108,10 @@ async def main(dry_run: bool) -> int:
                   f"prompt_chars={len(n['prompt_template'])}")
         return 0
 
-    db = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    db = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     try:
         created = 0
         for n in nodes:
@@ -121,17 +121,15 @@ async def main(dry_run: bool) -> int:
         print(f"\nTotal: {created} SubagentRole nodes in graph.")
 
         # Verification: all 6 present + model_preference populated.
-        async with db._driver.session(database=db._database) as session:
-            q = """
-                MATCH (r:SubagentRole)
-                RETURN r.role_id AS rid, r.name AS name, r.model_preference AS model
-                ORDER BY r.role_id
-            """
-            result = await session.run(q)
-            rows = [rec.data() async for rec in result]
-            print("\nSubagentRole nodes in graph:")
-            for r in rows:
-                print(f"  {r['rid']:<30} name={r['name']}  model={r['model']}")
+        q = """
+            MATCH (r:SubagentRole)
+            RETURN r.role_id AS rid, r.name AS name, r.model_preference AS model
+            ORDER BY r.role_id
+        """
+        rows = db._execute_query(q)
+        print("\nSubagentRole nodes in graph:")
+        for r in rows:
+            print(f"  {r['rid']:<30} name={r['name']}  model={r['model']}")
     finally:
         await db.close()
     return 0

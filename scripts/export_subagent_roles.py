@@ -1,4 +1,4 @@
-"""Export SubagentRole nodes from Neo4j to .claude/agents/*.md.
+"""Export SubagentRole nodes from the graph to .claude/agents/*.md.
 
 Phase 3b (plan Section 8.1 deliverable 2): inverse of ingest_subagent_roles.py.
 The graph is the canonical source of subagent definitions; this script
@@ -18,12 +18,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
 AGENTS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "agents"
 
 
@@ -49,26 +46,27 @@ def render_agent_md(row: dict) -> str:
     return "\n".join(lines)
 
 
-async def fetch_roles(db: Neo4jConnection) -> list[dict]:
-    async with db._driver.session(database=db._database) as session:
-        query = """
-            MATCH (r:SubagentRole)
-            RETURN r.role_id         AS role_id,
-                   r.name            AS name,
-                   r.description     AS description,
-                   r.statement       AS statement,
-                   r.prompt_template AS prompt_template,
-                   r.model_preference AS model_preference,
-                   r.tools           AS tools,
-                   r.dispatched_by   AS dispatched_by
-            ORDER BY r.name
-        """
-        result = await session.run(query)
-        return [rec.data() async for rec in result]
+async def fetch_roles(db: FalkorDBLiteConnection) -> list[dict]:
+    query = """
+        MATCH (r:SubagentRole)
+        RETURN r.role_id         AS role_id,
+               r.name            AS name,
+               r.description     AS description,
+               r.statement       AS statement,
+               r.prompt_template AS prompt_template,
+               r.model_preference AS model_preference,
+               r.tools           AS tools,
+               r.dispatched_by   AS dispatched_by
+        ORDER BY r.name
+    """
+    return db._execute_query(query)
 
 
 async def main(dry_run: bool, check: bool) -> int:
-    db = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    db = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     try:
         rows = await fetch_roles(db)
     finally:

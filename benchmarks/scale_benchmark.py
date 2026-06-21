@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
+from writ.config import get_falkordb_graph, get_falkordb_module, get_falkordb_path, get_redis_bin
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -444,7 +444,7 @@ def write_report(results: dict) -> None:
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    from writ.graph.db import Neo4jConnection
+    from writ.graph.db import FalkorDBLiteConnection
     from writ.graph.ingest import discover_rule_files, parse_rules_from_file, validate_parsed_rule
 
     print("Loading embedding model (one-time)...")
@@ -467,7 +467,12 @@ async def main() -> None:
             real_rules.append(clean)
     print(f"  Loaded {len(real_rules)} real rules")
 
-    db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+    db = FalkorDBLiteConnection(
+        db_path=get_falkordb_path(),
+        graph=get_falkordb_graph(),
+        module_path=get_falkordb_module(),
+        redis_bin=get_redis_bin(),
+    )
     results: dict = {}
 
     try:

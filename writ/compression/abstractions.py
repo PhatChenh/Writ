@@ -1,6 +1,6 @@
 """Abstraction node generation from rule clusters.
 
-Per ARCH-SSOT-001: Abstraction nodes stored in Neo4j are the canonical source.
+Per ARCH-SSOT-001: Abstraction nodes stored in the graph are the canonical source.
 Per INV-SUMMARY: summary = statement of rule nearest to cluster centroid.
 No LLM dependency. Deterministic and offline.
 """
@@ -60,7 +60,7 @@ async def write_abstractions_to_graph(
     db: FalkorDBLiteConnection,
     abstractions: list[dict],
 ) -> int:
-    """Write Abstraction nodes and ABSTRACTS edges to Neo4j.
+    """Write Abstraction nodes and ABSTRACTS edges to the graph.
 
     Deletes existing abstractions first for clean recompression (INV-IDEMPOTENT).
     Returns count of abstractions written.

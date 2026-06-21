@@ -2,7 +2,7 @@
 """Per-stage cold-start instrumentation for build_pipeline().
 
 Runs build_pipeline() three times against the live 276-rule corpus
-and reports per-stage timings: Neo4j queries, BM25 build, embedding
+and reports per-stage timings: graph queries, BM25 build, embedding
 model load, bulk encode, HNSW (load-from-cache vs build vs save),
 adjacency cache build, abstractions load.
 
@@ -50,19 +50,16 @@ from pathlib import Path
 
 from writ.config import (
     get_hnsw_cache_dir,
-    get_neo4j_password,
-    get_neo4j_uri,
-    get_neo4j_user,
+    get_falkordb_path,
+    get_falkordb_graph,
+    get_falkordb_module,
+    get_redis_bin,
 )
-from writ.graph.db import Neo4jConnection
+from writ.graph.db import FalkorDBLiteConnection
 from writ.retrieval import embeddings as embeddings_mod
 from writ.retrieval import keyword as keyword_mod
 from writ.retrieval import traversal as traversal_mod
 from writ.retrieval.pipeline import build_pipeline
-
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
 
 
 @contextmanager
@@ -144,7 +141,7 @@ def install_patches(record: dict[str, float]) -> None:
     traversal_mod.AdjacencyCache.build_from_db = patched_adj_build
 
 
-async def run_one(db: Neo4jConnection, run_index: int) -> dict[str, float]:
+async def run_one(db: FalkorDBLiteConnection, run_index: int) -> dict[str, float]:
     record: dict[str, float] = {}
     install_patches(record)
 
@@ -180,7 +177,7 @@ def print_table(runs: list[dict[str, float]]) -> None:
     totals = [r.get("total", 0.0) for r in runs]
     unaccounted = [t - a for t, a in zip(totals, accounted)]
 
-    rows.append(["(other / Neo4j queries)"] + [f"{u:.3f}s" for u in unaccounted])
+    rows.append(["(other / graph queries)"] + [f"{u:.3f}s" for u in unaccounted])
     rows.append(["total"] + [f"{t:.3f}s" for t in totals])
 
     col_widths = [max(len(str(row[i])) for row in rows + [headers]) for i in range(len(headers))]
@@ -210,10 +207,13 @@ async def main(args: argparse.Namespace) -> None:
             shutil.rmtree(cache_dir)
             print(f"Cleared HNSW cache at {cache_dir}")
 
-    conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    conn = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     count = await conn.count_rules()
     if count == 0:
-        print("ERROR: Neo4j has no rules. Run `writ import-markdown` first.")
+        print("ERROR: Graph has no rules. Run `writ import-markdown` first.")
         await conn.close()
         return
     print(f"Corpus: {count} rules. Running {args.runs} iterations of build_pipeline().")

@@ -11,7 +11,6 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
 from writ.retrieval.embeddings import (
     DEFAULT_ONNX_DIR,
     CachedEncoder,
@@ -137,18 +136,18 @@ class TestOnnxRankingStability:
     inline corpus.
 
     Rewritten 2026-05-14 (Finding 10) to fix the test-order-dependent
-    flake. The prior implementation read the corpus from Neo4j and
+    flake. The prior implementation read the corpus from the graph DB and
     asserted strict top-5 ordering equality against the
     sentence-transformers + ONNX pipelines; it passed inside the full
     `make test` suite but failed in isolation with 4 ADJACENT-SWAP
     divergences against the long-lived 276-rule corpus. The test was
     measuring numerical-precision drift between the two backends but
-    coupling that measurement to whatever corpus state Neo4j happened
+    coupling that measurement to whatever corpus state the graph DB happened
     to be in at the time it ran.
 
     Two changes make the test corpus-state-independent:
 
-      1. The corpus is declared inline. Neo4j is not involved.
+      1. The corpus is declared inline. The graph DB is not involved.
          build_pipeline is not involved. The test exercises the
          embedding + cosine-similarity layer directly, which is the
          layer where PT vs ONNX divergence actually originates.
@@ -425,34 +424,29 @@ class TestEmbeddingModelSelection:
 
     @pytest.mark.asyncio
     async def test_raises_when_onnx_unavailable_and_no_override(
-        self, monkeypatch, force_onnx_failure
+        self, monkeypatch, force_onnx_failure, db
     ):
         """State 3: ONNX construction fails, no override env var, build_pipeline raises."""
-        from writ.graph.db import Neo4jConnection
         from writ.retrieval.pipeline import build_pipeline
 
         monkeypatch.delenv("WRIT_ALLOW_EMBEDDING_FALLBACK", raising=False)
 
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
-        try:
-            count = await db.count_rules()
-            if count == 0:
-                pytest.skip("Neo4j has no rules. Run `writ import-markdown` first.")
+        count = await db.count_rules()
+        if count == 0:
+            pytest.skip("No rules in test graph. Run `writ import-markdown` first.")
 
-            with pytest.raises(RuntimeError) as excinfo:
-                await build_pipeline(db)
+        with pytest.raises(RuntimeError) as excinfo:
+            await build_pipeline(db)
 
-            msg = str(excinfo.value)
-            # The message must name the cause exception class, the override
-            # env var, and the export script. If any of those goes missing,
-            # the next maintainer hits the error without an actionable next
-            # step and the contract loses its operational value.
-            assert "ONNX embedding model unavailable" in msg
-            assert "FileNotFoundError" in msg
-            assert "WRIT_ALLOW_EMBEDDING_FALLBACK" in msg
-            assert "scripts/export_onnx.py" in msg
-        finally:
-            await db.close()
+        msg = str(excinfo.value)
+        # The message must name the cause exception class, the override
+        # env var, and the export script. If any of those goes missing,
+        # the next maintainer hits the error without an actionable next
+        # step and the contract loses its operational value.
+        assert "ONNX embedding model unavailable" in msg
+        assert "FileNotFoundError" in msg
+        assert "WRIT_ALLOW_EMBEDDING_FALLBACK" in msg
+        assert "scripts/export_onnx.py" in msg
 
     @pytest.fixture()
     def force_sentence_transformers_unavailable(self, monkeypatch):
@@ -475,6 +469,7 @@ class TestEmbeddingModelSelection:
         monkeypatch,
         force_onnx_failure,
         force_sentence_transformers_unavailable,
+        db,
     ):
         """State: ONNX unavailable, fallback opted in via env var, but
         sentence-transformers also missing.
@@ -490,69 +485,59 @@ class TestEmbeddingModelSelection:
         actionable, names cause + remediation, surfaces at startup not
         at first request.
         """
-        from writ.graph.db import Neo4jConnection
         from writ.retrieval.pipeline import build_pipeline
 
         monkeypatch.setenv("WRIT_ALLOW_EMBEDDING_FALLBACK", "1")
 
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
-        try:
-            count = await db.count_rules()
-            if count == 0:
-                pytest.skip("Neo4j has no rules. Run `writ import-markdown` first.")
+        count = await db.count_rules()
+        if count == 0:
+            pytest.skip("No rules in test graph. Run `writ import-markdown` first.")
 
-            with pytest.raises(RuntimeError) as excinfo:
-                await build_pipeline(db)
+        with pytest.raises(RuntimeError) as excinfo:
+            await build_pipeline(db)
 
-            msg = str(excinfo.value)
-            # The error must name the missing library, the [fallback]
-            # install command, and the pip install verb so a user
-            # scanning the message can act without re-reading docs.
-            assert "sentence" in msg.lower(), (
-                f"RuntimeError must name sentence-transformers; got: {msg!r}"
-            )
-            assert "fallback" in msg, (
-                f"RuntimeError must name the [fallback] extras group; got: {msg!r}"
-            )
-            assert "pip install" in msg, (
-                f"RuntimeError must name the pip install verb; got: {msg!r}"
-            )
-        finally:
-            await db.close()
+        msg = str(excinfo.value)
+        # The error must name the missing library, the [fallback]
+        # install command, and the pip install verb so a user
+        # scanning the message can act without re-reading docs.
+        assert "sentence" in msg.lower(), (
+            f"RuntimeError must name sentence-transformers; got: {msg!r}"
+        )
+        assert "fallback" in msg, (
+            f"RuntimeError must name the [fallback] extras group; got: {msg!r}"
+        )
+        assert "pip install" in msg, (
+            f"RuntimeError must name the pip install verb; got: {msg!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_fallback_used_when_override_set_and_warning_logged(
-        self, monkeypatch, caplog, force_onnx_failure, fake_sentence_transformer
+        self, monkeypatch, caplog, force_onnx_failure, fake_sentence_transformer, db
     ):
         """State 2: ONNX fails, override env var is set, fallback is taken and warned."""
         import logging
 
-        from writ.graph.db import Neo4jConnection
         from writ.retrieval.pipeline import build_pipeline
 
         monkeypatch.setenv("WRIT_ALLOW_EMBEDDING_FALLBACK", "1")
         caplog.set_level(logging.WARNING, logger="writ.retrieval.pipeline")
 
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
-        try:
-            count = await db.count_rules()
-            if count == 0:
-                pytest.skip("Neo4j has no rules. Run `writ import-markdown` first.")
+        count = await db.count_rules()
+        if count == 0:
+            pytest.skip("No rules in test graph. Run `writ import-markdown` first.")
 
-            # Should NOT raise -- the override grants permission to fall back.
-            pipeline = await build_pipeline(db)
-            assert pipeline is not None
+        # Should NOT raise -- the override grants permission to fall back.
+        pipeline = await build_pipeline(db)
+        assert pipeline is not None
 
-            warnings = [
-                rec
-                for rec in caplog.records
-                if rec.levelno >= logging.WARNING
-                and rec.name == "writ.retrieval.pipeline"
-            ]
-            assert warnings, "expected WARNING from pipeline; got none"
-            warning_text = " ".join(rec.getMessage() for rec in warnings)
-            assert "ONNX embedding model unavailable" in warning_text
-            assert "WRIT_ALLOW_EMBEDDING_FALLBACK" in warning_text
-            assert "SentenceTransformer fallback" in warning_text
-        finally:
-            await db.close()
+        warnings = [
+            rec
+            for rec in caplog.records
+            if rec.levelno >= logging.WARNING
+            and rec.name == "writ.retrieval.pipeline"
+        ]
+        assert warnings, "expected WARNING from pipeline; got none"
+        warning_text = " ".join(rec.getMessage() for rec in warnings)
+        assert "ONNX embedding model unavailable" in warning_text
+        assert "WRIT_ALLOW_EMBEDDING_FALLBACK" in warning_text
+        assert "SentenceTransformer fallback" in warning_text

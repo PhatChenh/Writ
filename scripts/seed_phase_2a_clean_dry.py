@@ -1,6 +1,6 @@
 """Phase 2A of the public rulebook expansion: Clean Code + DRY.
 
-Seeds 27 new CLEAN-* and DRY-* rules into Neo4j (0 mandatory) and renames
+Seeds 27 new CLEAN-* and DRY-* rules into the graph (0 mandatory) and renames
 6 legacy ARCH-* rules to align with the public-rulebook IDs:
 
   ARCH-FUNC-001  -> CLEAN-FUNC-002  (function length cap)
@@ -22,8 +22,8 @@ from __future__ import annotations
 import asyncio
 from datetime import date
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 
 TODAY = date.today().isoformat()
 
@@ -350,52 +350,54 @@ RULES = CLEAN_RULES + DRY_RULES
 
 
 async def main() -> None:
-    db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+    db = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     try:
-        async with db._driver.session(database=db._database) as session:
-            # Rename legacy ARCH-* rules to public-rulebook IDs.
-            renames = [
-                ("ARCH-FUNC-001", "CLEAN-FUNC-002"),
-                ("ARCH-CONST-001", "CLEAN-MAGIC-001"),
-                ("ARCH-ERR-001", "CLEAN-ERR-001"),
-                ("ARCH-DRY-001", "DRY-DUP-001"),
-                ("ARCH-SSOT-001", "DRY-CONFIG-001"),
-            ]
-            for old, new in renames:
-                await session.run(
-                    "MATCH (r:Rule {rule_id: $old}) DETACH DELETE r", old=old
-                )
-                print(f"DELETED {old:20s} (absorbed into {new})")
+        # Rename legacy ARCH-* rules to public-rulebook IDs.
+        renames = [
+            ("ARCH-FUNC-001", "CLEAN-FUNC-002"),
+            ("ARCH-CONST-001", "CLEAN-MAGIC-001"),
+            ("ARCH-ERR-001", "CLEAN-ERR-001"),
+            ("ARCH-DRY-001", "DRY-DUP-001"),
+            ("ARCH-SSOT-001", "DRY-CONFIG-001"),
+        ]
+        for old, new in renames:
+            db._execute_query(
+                "MATCH (r:Rule {rule_id: $old}) DETACH DELETE r", old=old
+            )
+            print(f"DELETED {old:20s} (absorbed into {new})")
 
-            # Upsert the 33 CLEAN-*, DRY-* rules.
-            created = updated = 0
-            for rule in RULES:
-                result = await session.run(
-                    "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x", rid=rule["rule_id"]
-                )
-                exists = await result.single() is not None
-                props = {k: v for k, v in rule.items() if k != "rule_id"}
-                await session.run(
-                    """
-                    MERGE (r:Rule {rule_id: $rid})
-                    SET r += $props
-                    """,
-                    rid=rule["rule_id"], props=props,
-                )
-                if exists:
-                    updated += 1
-                    print(f"UPDATED {rule['rule_id']:30s} {rule['severity']}")
-                else:
-                    created += 1
-                    print(f"CREATED {rule['rule_id']:30s} {rule['severity']}")
+        # Upsert the 33 CLEAN-*, DRY-* rules.
+        created = updated = 0
+        for rule in RULES:
+            rows = db._execute_query(
+                "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x", rid=rule["rule_id"]
+            )
+            exists = bool(rows)
+            props = {k: v for k, v in rule.items() if k != "rule_id"}
+            db._execute_query(
+                """
+                MERGE (r:Rule {rule_id: $rid})
+                SET r += $props
+                """,
+                rid=rule["rule_id"], props=props,
+            )
+            if exists:
+                updated += 1
+                print(f"UPDATED {rule['rule_id']:30s} {rule['severity']}")
+            else:
+                created += 1
+                print(f"CREATED {rule['rule_id']:30s} {rule['severity']}")
 
-            print()
-            print(f"Summary: {created} created, {updated} updated.")
+        print()
+        print(f"Summary: {created} created, {updated} updated.")
 
-            r = await session.run("MATCH (r:Rule) RETURN count(r) AS n")
-            print(f"Total rules: {(await r.single())['n']}")
-            r = await session.run("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
-            print(f"Mandatory: {(await r.single())['n']}")
+        rows = db._execute_query("MATCH (r:Rule) RETURN count(r) AS n")
+        print(f"Total rules: {rows[0]['n']}")
+        rows = db._execute_query("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
+        print(f"Mandatory: {rows[0]['n']}")
     finally:
         await db.close()
 

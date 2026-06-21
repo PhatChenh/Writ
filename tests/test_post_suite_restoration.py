@@ -1,4 +1,4 @@
-"""End-of-suite Neo4j restoration: methodology corpus must be present
+"""End-of-suite graph restoration: methodology corpus must be present
 after pytest finishes.
 
 Context: 9 test modules call `db.clear_all()`. Only `test_retrieval`
@@ -12,7 +12,7 @@ Symptom: `/always-on?mode=work` returned empty after `pytest -q`
 because the methodology corpus had been wiped and never restored.
 
 This test pins the new contract: after pytest_sessionfinish runs,
-Skill nodes are in Neo4j (a methodology marker, since core Rule
+Skill nodes are in the graph (a methodology marker, since core Rule
 re-loads can leave that label empty).
 """
 
@@ -32,25 +32,26 @@ SKILL_DIR = str(Path.home() / ".claude/skills/writ")
 
 
 def _count(label: str) -> int:
-    """Direct Neo4j count of a label, bypassing the test session
+    """Direct FalkorDB graph count of a label, bypassing the test session
     fixtures (so we observe the production graph state)."""
-    try:
-        from writ.config import (
-            get_neo4j_password,
-            get_neo4j_uri,
-            get_neo4j_user,
-        )
-        from writ.graph.db import Neo4jConnection
-    except ImportError:
-        pytest.skip("neo4j driver not installed")
+    from writ.config import (
+        get_falkordb_path,
+        get_falkordb_graph,
+        get_falkordb_module,
+        get_redis_bin,
+    )
+    from writ.graph.db import FalkorDBLiteConnection
 
     async def _q() -> int:
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
-        async with db._driver.session(database=db._database) as s:
-            r = await s.run(f"MATCH (n:{label}) RETURN count(n) AS c")
-            row = await r.single()
+        db = FalkorDBLiteConnection(
+            db_path=get_falkordb_path(),
+            graph=get_falkordb_graph(),
+            module_path=get_falkordb_module(),
+            redis_bin=get_redis_bin(),
+        )
+        rows = db._execute_query(f"MATCH (n:{label}) RETURN count(n) AS c")
         await db.close()
-        return int(row["c"])
+        return int(rows[0]["c"]) if rows else 0
 
     return asyncio.run(_q())
 

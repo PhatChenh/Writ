@@ -1,7 +1,7 @@
 """Unit tests for writ/graph/methodology_ingest.py (v1.5.0).
 
 Covers the library surface that the unified `writ import-markdown` CLI and
-the `scripts/migrate.py` shim both consume. End-to-end / Neo4j-integration
+the `scripts/migrate.py` shim both consume. End-to-end / graph-integration
 behavior is exercised by tests/test_import_markdown_unified.py; this module
 pins the in-process invariants:
 

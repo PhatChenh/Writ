@@ -1,35 +1,17 @@
 """Phase 2: Infrastructure integration tests.
 
-Tests Neo4j CRUD, Tantivy indexing, hnswlib search, and graph traversal.
-Requires running Neo4j instance.
+Tests graph DB CRUD, Tantivy indexing, hnswlib search, and graph traversal.
+Requires the embedded FalkorDB instance.
 Each test is isolated with its own data (TEST-ISO-001).
 """
 
 from __future__ import annotations
 
 import pytest
-import pytest_asyncio
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
 from writ.retrieval.embeddings import HnswlibStore
 from writ.retrieval.keyword import KeywordIndex
 from writ.retrieval.traversal import GraphTraverser
-
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
-
-
-@pytest_asyncio.fixture()
-async def db():
-    """Provide a clean Neo4j connection for each test."""
-    conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-    await conn.clear_all()
-    yield conn
-    await conn.clear_all()
-    await conn.close()
-
 
 def _make_rule(rule_id: str, mandatory: bool = False) -> dict:
     """Helper to build a minimal rule dict for testing."""
@@ -52,11 +34,11 @@ def _make_rule(rule_id: str, mandatory: bool = False) -> dict:
     }
 
 
-class TestNeo4jCrud:
-    """Rule node CRUD against live Neo4j."""
+class TestCrud:
+    """Rule node CRUD against the live graph DB."""
 
     @pytest.mark.asyncio
-    async def test_create_and_read_rule(self, db: Neo4jConnection) -> None:
+    async def test_create_and_read_rule(self, db) -> None:
         rule_data = _make_rule("ARCH-ORG-001")
         created_id = await db.create_rule(rule_data)
         assert created_id == "ARCH-ORG-001"
@@ -68,7 +50,7 @@ class TestNeo4jCrud:
         assert fetched["severity"] == "high"
 
     @pytest.mark.asyncio
-    async def test_create_edge(self, db: Neo4jConnection) -> None:
+    async def test_create_edge(self, db) -> None:
         await db.create_rule(_make_rule("ARCH-ORG-001"))
         await db.create_rule(_make_rule("ARCH-DI-001"))
         await db.create_edge("DEPENDS_ON", "ARCH-ORG-001", "ARCH-DI-001")
@@ -78,7 +60,7 @@ class TestNeo4jCrud:
         assert "ARCH-DI-001" in neighbor_ids
 
     @pytest.mark.asyncio
-    async def test_merge_is_idempotent(self, db: Neo4jConnection) -> None:
+    async def test_merge_is_idempotent(self, db) -> None:
         rule_data = _make_rule("ARCH-ORG-001")
         await db.create_rule(rule_data)
         await db.create_rule(rule_data)
@@ -87,7 +69,7 @@ class TestNeo4jCrud:
         assert count == 1
 
     @pytest.mark.asyncio
-    async def test_get_nonexistent_returns_none(self, db: Neo4jConnection) -> None:
+    async def test_get_nonexistent_returns_none(self, db) -> None:
         result = await db.get_rule("DOES-NOT-EXIST")
         assert result is None
 
@@ -96,7 +78,7 @@ class TestTraversal:
     """Graph traversal queries."""
 
     @pytest.mark.asyncio
-    async def test_one_hop_returns_neighbor(self, db: Neo4jConnection) -> None:
+    async def test_one_hop_returns_neighbor(self, db) -> None:
         await db.create_rule(_make_rule("RULE-A-001"))
         await db.create_rule(_make_rule("RULE-B-001"))
         await db.create_edge("DEPENDS_ON", "RULE-A-001", "RULE-B-001")
@@ -107,7 +89,7 @@ class TestTraversal:
         assert "RULE-B-001" in neighbor_ids
 
     @pytest.mark.asyncio
-    async def test_two_hop_returns_transitive(self, db: Neo4jConnection) -> None:
+    async def test_two_hop_returns_transitive(self, db) -> None:
         await db.create_rule(_make_rule("RULE-A-001"))
         await db.create_rule(_make_rule("RULE-B-001"))
         await db.create_rule(_make_rule("RULE-C-001"))
@@ -120,7 +102,7 @@ class TestTraversal:
         assert "RULE-C-001" in neighbor_ids
 
     @pytest.mark.asyncio
-    async def test_traversal_returns_edge_types(self, db: Neo4jConnection) -> None:
+    async def test_traversal_returns_edge_types(self, db) -> None:
         await db.create_rule(_make_rule("RULE-A-001"))
         await db.create_rule(_make_rule("RULE-B-001"))
         await db.create_edge("CONFLICTS_WITH", "RULE-A-001", "RULE-B-001")

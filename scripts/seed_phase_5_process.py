@@ -1,6 +1,6 @@
 """Phase 5 of the public rulebook expansion: Development Lifecycle & Process.
 
-Seeds 10 new PROC-* rules into Neo4j (0 mandatory).
+Seeds 10 new PROC-* rules into the graph (0 mandatory).
 
 PROC-PLAN-001 and PROC-TEST-001 articulate the workflow policy. The
 existing ENF-PROC-PLAN-001, ENF-PROC-TDD-001, and ENF-PROC-BRAIN-001 rules
@@ -17,8 +17,8 @@ from __future__ import annotations
 import asyncio
 from datetime import date
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 
 TODAY = date.today().isoformat()
 
@@ -146,37 +146,39 @@ RULES = [
 
 
 async def main() -> None:
-    db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+    db = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     try:
-        async with db._driver.session(database=db._database) as session:
-            created = updated = 0
-            for rule in RULES:
-                result = await session.run(
-                    "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x", rid=rule["rule_id"]
-                )
-                exists = await result.single() is not None
-                props = {k: v for k, v in rule.items() if k != "rule_id"}
-                await session.run(
-                    """
-                    MERGE (r:Rule {rule_id: $rid})
-                    SET r += $props
-                    """,
-                    rid=rule["rule_id"], props=props,
-                )
-                if exists:
-                    updated += 1
-                    print(f"UPDATED {rule['rule_id']:30s} {rule['severity']}")
-                else:
-                    created += 1
-                    print(f"CREATED {rule['rule_id']:30s} {rule['severity']}")
+        created = updated = 0
+        for rule in RULES:
+            rows = db._execute_query(
+                "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x", rid=rule["rule_id"]
+            )
+            exists = bool(rows)
+            props = {k: v for k, v in rule.items() if k != "rule_id"}
+            db._execute_query(
+                """
+                MERGE (r:Rule {rule_id: $rid})
+                SET r += $props
+                """,
+                rid=rule["rule_id"], props=props,
+            )
+            if exists:
+                updated += 1
+                print(f"UPDATED {rule['rule_id']:30s} {rule['severity']}")
+            else:
+                created += 1
+                print(f"CREATED {rule['rule_id']:30s} {rule['severity']}")
 
-            print()
-            print(f"Summary: {created} created, {updated} updated.")
+        print()
+        print(f"Summary: {created} created, {updated} updated.")
 
-            r = await session.run("MATCH (r:Rule) RETURN count(r) AS n")
-            print(f"Total rules: {(await r.single())['n']}")
-            r = await session.run("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
-            print(f"Mandatory: {(await r.single())['n']}")
+        rows = db._execute_query("MATCH (r:Rule) RETURN count(r) AS n")
+        print(f"Total rules: {rows[0]['n']}")
+        rows = db._execute_query("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
+        print(f"Mandatory: {rows[0]['n']}")
     finally:
         await db.close()
 

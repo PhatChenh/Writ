@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import pytest
+import pytest_asyncio
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -41,11 +43,58 @@ def pytest_sessionfinish(session, exitstatus):
             check=False,
         )
     except (subprocess.SubprocessError, OSError):
-        # Neo4j may not be running, migrate.py may have changed
+        # The graph server may not be running, migrate.py may have changed
         # signature, etc. End-of-suite is best-effort -- we don't
         # raise out of pytest_sessionfinish because doing so flips
         # exitstatus and masks the actual test results.
         pass
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 shared DB fixtures — one real FalkorDBLiteConnection, session-scoped,
+# auto-reset before every test so no test can leak state into the next.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def _session_db():
+    """One real FalkorDBLiteConnection for the whole test run, on a throwaway
+    temp dir so it never touches or locks the production .writ/graph.db.
+    """
+    import shutil
+    import tempfile
+
+    from writ.config import (
+        get_falkordb_graph,
+        get_falkordb_module,
+        get_redis_bin,
+    )
+    from writ.graph.db import FalkorDBLiteConnection
+
+    tmpdir = tempfile.mkdtemp(prefix="writ-test-")
+    db_path = os.path.join(tmpdir, "graph.db")
+    conn = FalkorDBLiteConnection(
+        db_path=db_path,
+        graph=get_falkordb_graph(),
+        module_path=get_falkordb_module(),
+        redis_bin=get_redis_bin(),
+    )
+    yield conn
+    await conn.close()
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _clear_db(_session_db):
+    """Wipe the test graph clean before every single test."""
+    await _session_db.clear_all()
+
+
+@pytest.fixture()
+def db(_session_db):
+    """Shared FalkorDBLiteConnection — the one handle every DB-touching test
+    asks for instead of building its own connection."""
+    return _session_db
 
 
 @pytest.fixture()

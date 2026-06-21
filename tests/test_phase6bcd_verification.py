@@ -2,7 +2,7 @@
 
 Closes the documentation/coverage gaps in the master plan
 (`docs/phase-6-plan.md`) for sub-phases 6b (edges + traversal),
-6c (ingest parser), and 6d (Neo4j migration). The substantive
+6c (ingest parser), and 6d (graph migration). The substantive
 testing for these sub-phases already lives in:
 
   - `tests/test_schema_roundtrip.py::TestNewEdgeTypes` (24 tests)
@@ -12,10 +12,10 @@ This file adds the small confirmatory assertions that pin the
 contract surface those existing tests didn't directly cover:
 
   6b -- ALLOWED_EDGE_TYPES set membership + class-name to
-        Neo4j-relationship-name mapping convention.
+        graph-relationship-name mapping convention.
   6c -- NODE START + legacy RULE START dispatch in the same file.
   6d -- migrate.py module imports + idempotency contract under a
-        stub Neo4j connection.
+        stub graph DB connection.
 
 No production code changes. Test-only addition.
 """
@@ -77,7 +77,7 @@ def _camel_to_screaming_snake(name: str) -> str:
 
 class TestPhase6bEdgeContract:
     """Edge-class contract surface: ALLOWED_EDGE_TYPES membership +
-    class-name to Neo4j-relationship-name convention."""
+    class-name to graph-relationship-name convention."""
 
     def test_allowed_edge_types_contains_all_eight_new_types(self) -> None:
         from writ.graph.db import ALLOWED_EDGE_TYPES
@@ -297,30 +297,6 @@ class TestPhase6cIngestContract:
 # ============================================================================
 
 
-class _StubNeo4jSession:
-    """Records every Cypher query + parameters for idempotency assertion."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    async def run(self, cypher: str, **params: Any):
-        self.calls.append((cypher, params))
-        # Return a no-op async iterable for any consumer.
-        class _Result:
-            async def consume(self_inner):
-                return None
-            async def single(self_inner):
-                return None
-            def __aiter__(self_inner):
-                return self_inner
-            async def __anext__(self_inner):
-                raise StopAsyncIteration
-        return _Result()
-
-    async def __aenter__(self): return self
-    async def __aexit__(self, *_a): return None
-
-
 class TestPhase6dMigrationContract:
     """Migration script imports cleanly; running it twice is a no-op
     (every MERGE seen in run-1 also seen in run-2 with identical
@@ -346,14 +322,14 @@ class TestPhase6dMigrationContract:
         )
 
     def test_migration_uses_merge_not_create(self) -> None:
-        """Idempotency in Neo4j migrations is achieved via MERGE, not
+        """Idempotency in graph migrations is achieved via MERGE, not
         CREATE. Source-level audit: the migration script should not
         contain unconditional CREATE statements for nodes/relationships
         that would duplicate on re-run.
         """
         src = (WRIT_ROOT / "scripts" / "migrate.py").read_text()
         # Permit CREATE INDEX / CREATE CONSTRAINT (those are idempotent
-        # via IF NOT EXISTS in modern Neo4j). Disallow plain `CREATE (n:`
+        # via IF NOT EXISTS in modern FalkorDB). Disallow plain `CREATE (n:`
         # node patterns.
         # Look for the dangerous form: CREATE (...:Label ...) without
         # surrounding MERGE context. A coarse but useful heuristic.

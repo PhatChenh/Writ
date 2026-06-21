@@ -24,7 +24,7 @@ SUGGESTION_LIMIT = 5
 class RuleIdCollisionError(Exception):
     """Raised when a rule_id already exists in the graph.
 
-    Neo4j's MERGE would silently update an existing node, so the authoring
+    The graph's MERGE would silently update an existing node, so the authoring
     pipeline needs an explicit pre-check. The existing rule payload is
     attached so callers can surface a useful diff to the user.
     """
@@ -39,7 +39,7 @@ async def check_id_collision(
     rule_id: str,
     db: FalkorDBLiteConnection,
 ) -> None:
-    """Fail fast if `rule_id` already exists in Neo4j.
+    """Fail fast if `rule_id` already exists in the graph.
 
     Runs `MATCH (r:Rule {rule_id: $id}) RETURN r`. Raises
     `RuleIdCollisionError` on a hit. Call before schema validation in the

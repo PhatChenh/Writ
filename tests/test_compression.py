@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import pytest_asyncio
 
 from writ.compression.abstractions import generate_abstractions
 from writ.compression.clusters import (
@@ -222,21 +221,10 @@ class TestAlgorithmEvaluation:
 
 
 # ---------------------------------------------------------------------------
-# Integration: Neo4j abstraction storage
+# Integration: graph abstraction storage
 # ---------------------------------------------------------------------------
 
 class TestAbstractionStorage:
-
-    @pytest_asyncio.fixture()
-    async def db(self):
-        from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-        from writ.graph.db import Neo4jConnection
-
-        conn = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
-        await conn.clear_all()
-        yield conn
-        await conn.clear_all()
-        await conn.close()
 
     @pytest.mark.asyncio()
     async def test_create_abstraction_node(self, db) -> None:

@@ -122,5 +122,5 @@ def test_weighting_numbers_cited(html_text: str) -> None:
 
 
 def test_pipeline_stages_named(html_text: str) -> None:
-    for term in ("BM25", "Tantivy", "hnswlib", "Neo4j", "RRF"):
+    for term in ("BM25", "Tantivy", "hnswlib", "FalkorDB", "RRF"):
         assert term in html_text, f"missing pipeline term {term}"

@@ -63,20 +63,16 @@ class TestSessionStartBootstrapContent:
             "session-start-bootstrap.sh venv probe must check for python3 binary"
         )
 
-    def test_session_start_probes_neo4j(self, content: str) -> None:
-        """Script must contain a TCP probe for Neo4j bolt port 7687."""
-        assert "7687" in content, (
-            "session-start-bootstrap.sh must probe Neo4j bolt port 7687"
+    def test_session_start_no_neo4j_probe(self, content: str) -> None:
+        """Script must NOT contain a TCP probe for Neo4j bolt port 7687 —
+        FalkorDBLite is embedded, no separate bolt port to probe."""
+        assert "7687" not in content, (
+            "session-start-bootstrap.sh must NOT probe Neo4j bolt port 7687 "
+            "(FalkorDBLite is embedded)"
         )
-        # Accept any of the common probe mechanisms
-        has_probe = (
-            "nc -z" in content
-            or "curl" in content
-            or "/dev/tcp/" in content
-            or "bash -c" in content
-        )
-        assert has_probe, (
-            "session-start-bootstrap.sh must probe port 7687 via nc -z, curl, or /dev/tcp/"
+        assert "/dev/tcp/" not in content, (
+            "session-start-bootstrap.sh must NOT contain /dev/tcp/ probe "
+            "(no external DB to probe)"
         )
 
     def test_session_start_probes_server_health(self, content: str) -> None:
@@ -86,7 +82,7 @@ class TestSessionStartBootstrapContent:
         )
 
     def test_session_start_graceful_degradation(self, content: str) -> None:
-        """Script must exit 0 in all branches; must not exit 1 for missing venv or Neo4j."""
+        """Script must exit 0 in all branches; must not exit 1 for missing venv."""
         lines = content.splitlines()
         hard_exits = [
             line.strip() for line in lines

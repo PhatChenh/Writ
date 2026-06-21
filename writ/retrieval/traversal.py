@@ -1,10 +1,10 @@
-"""Neo4j Cypher 1-2 hop traversal from candidate rule_ids.
+"""Cypher 1-2 hop traversal from candidate rule_ids.
 
 Two backends:
-1. Live Neo4j queries (used during ingest/validate, offline operations)
+1. Live graph queries (used during ingest/validate, offline operations)
 2. Pre-computed adjacency cache (used in hot path, built at startup)
 
-Latency budget: < 3ms. Neo4j live queries exceed this (Phase 2 benchmarks).
+Latency budget: < 3ms. Live graph queries exceed this (Phase 2 benchmarks).
 The adjacency cache is the mitigation: traversal becomes a dict lookup (< 0.1ms).
 
 Per ARCH-DI-001: receives db connection via constructor injection.
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 class AdjacencyCache:
     """In-memory adjacency list for hot-path traversal.
 
-    Built from Neo4j at startup. Lookup is O(1) per rule_id.
+    Built from the graph at startup. Lookup is O(1) per rule_id.
     """
 
     def __init__(self) -> None:
@@ -31,7 +31,7 @@ class AdjacencyCache:
         self._build_time_ms: float = 0.0
 
     async def build_from_db(self, db: GraphConnection) -> int:
-        """Load all edges from Neo4j into memory.
+        """Load all edges from the graph into memory.
 
         Phase 1 expansion: matches any labeled node (Rule, Skill, Playbook,
         AntiPattern, etc.) so methodology edges surface during Stage 4

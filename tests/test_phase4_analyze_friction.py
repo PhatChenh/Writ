@@ -4,7 +4,7 @@ Reads workflow-friction.log (JSONL), parses into FrictionEvent Pydantic
 models, aggregates by rule / event / mode. Used after manual pressure
 runs to turn log deltas into per-rule compliance metrics.
 
-Pure file I/O; no Neo4j, no LLM.
+Pure file I/O; no graph DB, no LLM.
 """
 from __future__ import annotations
 

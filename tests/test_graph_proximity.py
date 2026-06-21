@@ -3,7 +3,7 @@
 Tests the two-pass ranking with graph proximity, backward compatibility
 with w_graph=0.0, and MRR@5 regression gates.
 
-Requires Neo4j running.
+Requires FalkorDB running.
 """
 
 from __future__ import annotations
@@ -15,16 +15,10 @@ import pytest
 import pytest_asyncio
 
 from tests.fixtures.regression_floors import HIT_RATE_FLOOR, MRR5_FLOOR
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
 from writ.graph.ingest import discover_rule_files, parse_rules_from_file
 from writ.retrieval.pipeline import build_pipeline, compute_graph_proximity
 from writ.retrieval.ranking import RankingWeights, compute_score
 from writ.retrieval.traversal import AdjacencyCache
-
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
 
 GROUND_TRUTH_PATH = Path("tests/fixtures/ground_truth_queries.json")
 
@@ -34,47 +28,61 @@ GROUND_TRUTH_PATH = Path("tests/fixtures/ground_truth_queries.json")
 # ground-truth expansion is preserved as a docstring on that module.
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def db():
-    """Self-contained db with migrated rules."""
-    conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-    await conn.clear_all()
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
+async def db(_session_db):
+    """Module-scoped db pre-loaded with bible rules for pipeline/cache.
 
+    Uses the shared session connection but loads bible data once at
+    module scope so pipeline and cache (also module-scoped) can be
+    built from a populated graph.  We override _clear_db below to
+    prevent the autouse wipe between tests within this module.
+    """
     bible_dir = Path("bible/")
     if bible_dir.exists():
-        rule_ids = set()
+        rule_ids: set[str] = set()
         all_rules: list[dict] = []
         for f in discover_rule_files(bible_dir):
             for rule_data in parse_rules_from_file(f):
                 clean = {k: v for k, v in rule_data.items() if not k.startswith("_")}
-                await conn.create_rule(clean)
+                await _session_db.create_rule(clean)
                 rule_ids.add(clean["rule_id"])
                 all_rules.append(rule_data)
         for rule_data in all_rules:
             for ref_id in rule_data.get("_cross_references", []):
                 if ref_id in rule_ids:
-                    await conn.create_edge("RELATED_TO", rule_data["rule_id"], ref_id)
+                    await _session_db.create_edge("RELATED_TO", rule_data["rule_id"], ref_id)
 
-    yield conn
-    await conn.clear_all()
-    await conn.close()
+    yield _session_db
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
+@pytest_asyncio.fixture(autouse=True, scope="module", loop_scope="session")
+async def _clear_db(_session_db):
+    """Override conftest's function-scoped autouse clear.
+
+    This module pre-loads bible data once at module scope and all of
+    its tests are read-only (no graph writes), so clearing between
+    tests would only destroy the pre-loaded state for tests that
+    depend on db directly.
+    """
+    # Intentionally empty: let bible data persist for the module.
+    pass
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
 async def cache(db):
     c = AdjacencyCache()
     await c.build_from_db(db)
     yield c
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
 async def pipeline_with_graph(db):
     """Pipeline with default weights (includes w_graph)."""
     p = await build_pipeline(db)
     yield p
 
 
-@pytest_asyncio.fixture(scope="module", loop_scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
 async def pipeline_no_graph(db):
     """Pipeline with w_graph=0.0 for backward compatibility testing."""
     weights = RankingWeights(

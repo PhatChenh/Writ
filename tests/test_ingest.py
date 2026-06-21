@@ -1,7 +1,7 @@
 """Phase 3: Ingestion and migration tests.
 
 Tests Markdown parsing, schema validation of parsed rules, and migration integration.
-Parser tests are pure unit tests (TEST-ISO-001). Migration tests require Neo4j.
+Parser tests are pure unit tests (TEST-ISO-001). Migration tests require FalkorDB.
 """
 
 from __future__ import annotations
@@ -10,19 +10,12 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
-import pytest_asyncio
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
 from writ.graph.ingest import (
     discover_rule_files,
     parse_rules_from_file,
     validate_parsed_rule,
 )
-
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
 
 SAMPLE_RULE = dedent("""\
     # Test Document
@@ -286,15 +279,6 @@ def tmp_custom_scope(tmp_path: Path) -> Path:
     return f
 
 
-@pytest_asyncio.fixture()
-async def db():
-    conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-    await conn.clear_all()
-    yield conn
-    await conn.clear_all()
-    await conn.close()
-
-
 class TestMarkdownParser:
     """Markdown rule block extraction."""
 
@@ -404,16 +388,16 @@ class TestScopeExtensibility:
         assert validated.scope == "policy"
 
 
-class TestNeo4jConstraints:
-    """Phase 1a: Neo4j uniqueness constraint and indexes."""
+class TestConstraints:
+    """Phase 1a: uniqueness constraint and indexes."""
 
     @pytest.mark.asyncio
-    async def test_apply_constraints_idempotent(self, db: Neo4jConnection) -> None:
+    async def test_apply_constraints_idempotent(self, db) -> None:
         await db.apply_constraints()
         await db.apply_constraints()
 
     @pytest.mark.asyncio
-    async def test_merge_idempotent_with_constraints(self, db: Neo4jConnection) -> None:
+    async def test_merge_idempotent_with_constraints(self, db) -> None:
         await db.apply_constraints()
         rule_data = {
             "rule_id": "TEST-CONST-001",
@@ -438,14 +422,14 @@ class TestNeo4jConstraints:
         assert count == 1
 
     @pytest.mark.asyncio
-    async def test_constraints_exist(self, db: Neo4jConnection) -> None:
+    async def test_constraints_exist(self, db) -> None:
         await db.apply_constraints()
         constraints = await db.list_constraints()
         names = [c["name"] for c in constraints]
         assert "rule_id_unique" in names
 
     @pytest.mark.asyncio
-    async def test_indexes_exist(self, db: Neo4jConnection) -> None:
+    async def test_indexes_exist(self, db) -> None:
         await db.apply_constraints()
         indexes = await db.list_indexes()
         names = [i["name"] for i in indexes]
@@ -454,10 +438,10 @@ class TestNeo4jConstraints:
 
 
 class TestMigrationIntegration:
-    """Full migration against live Neo4j."""
+    """Full migration against the live graph DB."""
 
     @pytest.mark.asyncio
-    async def test_migrate_real_bible(self, db: Neo4jConnection) -> None:
+    async def test_migrate_real_bible(self, db) -> None:
         bible_dir = Path("bible/")
         if not bible_dir.exists():
             pytest.skip("bible/ directory not found")
@@ -487,7 +471,7 @@ class TestMigrationIntegration:
         print(f"\nMigrated {count} rules from {len(files)} files")
 
     @pytest.mark.asyncio
-    async def test_idempotent(self, db: Neo4jConnection) -> None:
+    async def test_idempotent(self, db) -> None:
         bible_dir = Path("bible/")
         if not bible_dir.exists():
             pytest.skip("bible/ directory not found")
@@ -516,7 +500,7 @@ class TestMigrationIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_skeleton_edges_created(self, db: Neo4jConnection) -> None:
+    async def test_skeleton_edges_created(self, db) -> None:
         bible_dir = Path("bible/")
         if not bible_dir.exists():
             pytest.skip("bible/ directory not found")

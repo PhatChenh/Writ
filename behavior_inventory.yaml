@@ -1,0 +1,231 @@
+# Behavior Inventory — Writ (FalkorDBLite fork)
+#
+# origin: design
+# granularity: outcome
+#
+# ID prefix convention: <phase-slug>-NN.
+#   Phase 1 (core storage swap) used decision IDs D1..D11 but defined NO
+#   behavior-inventory prefix, so none is inherited. Phase 2 introduces the
+#   prefix P2-INFRA (phase 2, infrastructure). Future phases pick their own
+#   slug (e.g. P3-TEST).
+#
+# These are OUTCOME criteria: what "working correctly" looks like from the
+# outside, independent of which implementation option is chosen. status:
+# planned until Phase 2 ships; the implementer flips to active.
+
+- id: P2-INFRA-01
+  behavior: "Standalone bootstrap runs clean on macOS with no Docker installed"
+  tier: phase
+  phase: 2
+  trigger: "bash scripts/bootstrap.sh"
+  fixtures: []
+  steps: "On a macOS machine with Docker NOT installed, run scripts/bootstrap.sh from the repo root."
+  expected: "Exits 0; prints a 'Writ is ready' banner; never calls docker or references Neo4j; .writ/graph.db exists afterward."
+  spec_ref: "docs/AI_artifacts/1_design/phase2-infra-cleanup.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-INFRA-02
+  behavior: "Plugin-mode bootstrap runs clean on macOS with no Docker installed"
+  tier: phase
+  phase: 2
+  trigger: "bash scripts/bootstrap-plugin.sh"
+  fixtures: []
+  steps: "With CLAUDE_PLUGIN_ROOT set and Docker NOT installed, run scripts/bootstrap-plugin.sh."
+  expected: "Exits 0; prints 'Writ plugin is ready'; no docker/Neo4j calls; venv lands at the persistent data dir; .writ/graph.db exists."
+  spec_ref: "docs/AI_artifacts/1_design/phase2-infra-cleanup.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-INFRA-03
+  behavior: "vendor/falkordb.so is downloaded by bootstrap; connection opens with no manual binary placement"
+  tier: phase
+  phase: 2
+  trigger: "bash scripts/bootstrap.sh   (on a checkout with no vendor/ dir)"
+  fixtures: []
+  steps: "Delete vendor/ if present, run bootstrap, then run `writ query \"security\"`."
+  expected: "vendor/falkordb.so exists after bootstrap; the query returns ranked rules without a 'module failed to load' error."
+  spec_ref: "docs/AI_artifacts/1_design/phase2-infra-cleanup.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-INFRA-04
+  behavior: "Re-running bootstrap re-ingests bible changes (always-ingest, MERGE-idempotent)"
+  tier: phase
+  phase: 2
+  trigger: "bash scripts/bootstrap.sh   (second run, with an edited bible rule)"
+  fixtures: []
+  steps: "Run bootstrap once, edit one rule statement under bible/, run bootstrap again."
+  expected: "Second run does NOT skip ingest; the edited rule's new statement is queryable afterward; expensive steps (venv, ONNX, brew, .so) are skipped."
+  spec_ref: "docs/AI_artifacts/1_design/phase2-infra-cleanup.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-INFRA-05
+  behavior: "All previously-broken Python scripts import and run against FalkorDBLite without ImportError"
+  tier: full
+  phase: 2
+  trigger: "python -c 'import scripts.seed_phase_1a_injection'  (and the other 15 scripts)"
+  fixtures: []
+  steps: "After bootstrap, import every fixed script module; run one seeder and the subagent ingest/export end-to-end."
+  expected: "No ImportError on Neo4jConnection or get_neo4j_*; no AttributeError on db._driver / db._database; seeder reports created/updated counts; ingest/export complete."
+  spec_ref: "docs/AI_artifacts/1_design/phase2-infra-cleanup.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-INFRA-06
+  behavior: "No docker/neo4j references remain in runtime or bootstrap paths"
+  tier: full
+  phase: 2
+  trigger: "grep -rIi 'neo4j\\|docker' scripts/ bin/ .claude/hooks/"
+  fixtures: []
+  steps: "Run the grep from the repo root after the cleanup, excluding historical migration comments."
+  expected: "Zero hits in scripts/, bin/, .claude/hooks/ (migration-comment carve-outs aside)."
+  spec_ref: "docs/AI_artifacts/1_design/phase2-infra-cleanup.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-INFRA-07
+  behavior: "RAG-inject hook no longer tries to start a Docker Neo4j container on prompt submit"
+  tier: full
+  phase: 2
+  trigger: "UserPromptSubmit event with Writ server down"
+  fixtures: []
+  steps: "With Docker absent and the Writ server stopped, submit a prompt and inspect /tmp/writ-rag-debug.log and the hook output."
+  expected: "Hook starts only the Writ server (uvicorn); never runs `docker start writ-neo4j`; degrades gracefully to 'server unavailable' if startup fails; exit 0."
+  spec_ref: "docs/AI_artifacts/1_design/phase2-infra-cleanup.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P2-INFRA-08
+  behavior: "Connection opens on the running machine's architecture without a hardcoded Apple-Silicon redis path"
+  tier: full
+  phase: 2
+  trigger: "FalkorDBLiteConnection(get_falkordb_path(), ...) on the host arch"
+  fixtures: []
+  steps: "Open a connection on the development machine without overriding redis_bin in writ.toml."
+  expected: "The redis-server binary resolves correctly for the host arch (no /opt/homebrew assumption baked in); on an unsupported arch the failure is loud, not silent."
+  spec_ref: "docs/AI_artifacts/1_design/phase2-infra-cleanup.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Test Suite Green. Prefix P3-TEST (phase 3, test suite).
+# Outcome criteria: the full suite runs GREEN against FalkorDBLite with zero
+# neo4j surface left in tests/, independent of how the shared DB fixture is
+# structured.
+# ---------------------------------------------------------------------------
+
+- id: P3-TEST-01
+  behavior: "Full test suite passes against FalkorDBLite"
+  tier: full
+  phase: 3
+  trigger: "pytest"
+  fixtures: []
+  steps: "From the repo root, with bootstrap done and the Writ server stopped, run `pytest`."
+  expected: "Exit code 0; the full count of collected tests passes (target 282, minus any the suite already xfails/skips by design); no test errors on collection (no ImportError for Neo4jConnection or get_neo4j_*)."
+  spec_ref: "docs/AI_artifacts/1_design/phase3-test-suite-green.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P3-TEST-02
+  behavior: "No neo4j surface remains anywhere under tests/"
+  tier: full
+  phase: 3
+  trigger: "grep -ri neo4j tests/"
+  fixtures: []
+  steps: "Run the grep from the repo root after the migration."
+  expected: "Zero hits except incidental historical-context comments and the natural-language corpus fixture (tests/fixtures/ground_truth_queries.json query text). No live code path imports Neo4jConnection or get_neo4j_* and no module-level NEO4J_URI/USER/PASSWORD constants remain."
+  spec_ref: "docs/AI_artifacts/1_design/phase3-test-suite-green.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P3-TEST-03
+  behavior: "Live-DB tests run against ONE shared throwaway FalkorDBLite, not a per-test 5-second startup"
+  tier: full
+  phase: 3
+  trigger: "pytest tests/test_infrastructure.py tests/test_integrity.py tests/test_authoring.py (and the other live-DB files)"
+  fixtures: []
+  steps: "Run the live-DB test files; observe wall-clock startup and the temp dir used."
+  expected: "Exactly one redis-server subprocess starts for the session (single ~5s amortized startup, not N×5s); the DB lives under a session temp dir, never .writ/graph.db; each test sees a clean graph (clear_all between tests); after the session the temp dir and its socket are gone."
+  spec_ref: "docs/AI_artifacts/1_design/phase3-test-suite-green.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P3-TEST-04
+  behavior: "Running the suite does not touch or lock the production graph DB"
+  tier: full
+  phase: 3
+  trigger: "pytest  (with a separate `writ serve` process holding .writ/graph.db)"
+  fixtures: []
+  steps: "Start the Writ server so it holds the production graph lock, then run pytest in parallel from the repo root."
+  expected: "pytest does not raise the 'graph DB is locked by PID' error and does not modify .writ/graph.db; the running server is unaffected because tests use a unique session temp dir + its own /tmp/writ-<hash> socket."
+  spec_ref: "docs/AI_artifacts/1_design/phase3-test-suite-green.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P3-TEST-05
+  behavior: "Real FalkorDB config getters are covered by tests"
+  tier: full
+  phase: 3
+  trigger: "pytest tests/test_config.py tests/test_config_integration.py"
+  fixtures: []
+  steps: "Run the rewritten config tests."
+  expected: "Tests exercise get_falkordb_path / get_falkordb_graph / get_falkordb_module / get_redis_bin (default, writ.toml override, and the x86_64 RuntimeError path) and pass; they do NOT import get_neo4j_* or DEFAULT_NEO4J_* (which no longer exist); the suite no longer skips with 'writ/config.py not yet implemented'."
+  spec_ref: "docs/AI_artifacts/1_design/phase3-test-suite-green.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P3-TEST-06
+  behavior: "Benchmark tests run without crashing"
+  tier: full
+  phase: 3
+  trigger: "pytest tests/benchmarks/   (and pytest -m perf)"
+  fixtures: []
+  steps: "Run the benchmark and perf-marked tests after the migration."
+  expected: "No crash and no ImportError/collection error; benchmarks complete. Baseline timing numbers may drift (out of correctness scope) — a drift-only failure is acceptable, a crash is not."
+  spec_ref: "docs/AI_artifacts/1_design/phase3-test-suite-green.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null
+
+- id: P3-TEST-07
+  behavior: "Post-suite methodology restoration still runs and leaves the corpus loaded"
+  tier: full
+  phase: 3
+  trigger: "pytest  (observe end-of-session restoration)"
+  fixtures: []
+  steps: "Run the full suite, then query /always-on?mode=work (or count Skill nodes) against the production graph."
+  expected: "The pytest_sessionfinish hook re-imports bible/ unconditionally; after the suite, methodology nodes (Skill / Playbook / ForbiddenResponse) are present in the production graph; the renamed restoration test passes against FalkorDBLite (no longer pytest.skips on a missing neo4j driver)."
+  spec_ref: "docs/AI_artifacts/1_design/phase3-test-suite-green.md §Success criteria"
+  human_reviewed: no
+  pytest_ref: null
+  status: planned
+  retired: null

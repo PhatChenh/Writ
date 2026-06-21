@@ -1,6 +1,6 @@
 """Markdown parsing -> schema validation -> graph write.
 
-bible/*.md is the exported view of the canonical Neo4j graph, not the source
+bible/*.md is the exported view of the canonical graph, not the source
 of truth. Use `writ import-markdown` only for initial bootstrap or when
 re-importing after manual Markdown edits.
 

@@ -1,6 +1,6 @@
 """Phase 1A of the public rulebook expansion: Injection Prevention.
 
-Seeds 17 SEC-INJ-* rules into Neo4j (6 mandatory) and absorbs the legacy
+Seeds 17 SEC-INJ-* rules into the graph (6 mandatory) and absorbs the legacy
 DB-SQL-001 (rename + broaden) into SEC-INJ-SQL-001.
 
 Idempotent. Re-runs MERGE existing rules with the same rule_id.
@@ -13,8 +13,8 @@ from __future__ import annotations
 import asyncio
 from datetime import date
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 
 TODAY = date.today().isoformat()
 
@@ -265,50 +265,53 @@ RULES = [
 
 
 async def main() -> None:
-    db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+    db = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     try:
-        async with db._driver.session(database=db._database) as session:
-            # 1. Absorb DB-SQL-001 into SEC-INJ-SQL-001 by deleting the legacy ID.
-            # The new SEC-INJ-SQL-001 rule below covers the broader principle;
-            # the named-bind style refinement from DB-SQL-001 is captured in its
-            # pass_example. DB-SQL-002 and DB-SQL-003 remain (SQL formatting,
-            # not in the public rulebook).
-            await session.run(
-                "MATCH (r:Rule {rule_id: 'DB-SQL-001'}) DETACH DELETE r"
+        # 1. Absorb DB-SQL-001 into SEC-INJ-SQL-001 by deleting the legacy ID.
+        # The new SEC-INJ-SQL-001 rule below covers the broader principle;
+        # the named-bind style refinement from DB-SQL-001 is captured in its
+        # pass_example. DB-SQL-002 and DB-SQL-003 remain (SQL formatting,
+        # not in the public rulebook).
+        db._execute_query(
+            "MATCH (r:Rule {rule_id: 'DB-SQL-001'}) DETACH DELETE r"
+        )
+        print("DELETED DB-SQL-001 (absorbed into SEC-INJ-SQL-001)")
+
+        # 2. Upsert the 17 SEC-INJ-* rules.
+        created = updated = 0
+        for rule in RULES:
+            rows = db._execute_query(
+                "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x",
+                {"rid": rule["rule_id"]},
             )
-            print("DELETED DB-SQL-001 (absorbed into SEC-INJ-SQL-001)")
+            exists = bool(rows)
+            # MERGE semantics on rule_id; SET overwrites all listed props.
+            props = {k: v for k, v in rule.items() if k != "rule_id"}
+            db._execute_query(
+                """
+                MERGE (r:Rule {rule_id: $rid})
+                SET r += $props
+                """,
+                {"rid": rule["rule_id"], "props": props},
+            )
+            if exists:
+                updated += 1
+                print(f"UPDATED {rule['rule_id']:25s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
+            else:
+                created += 1
+                print(f"CREATED {rule['rule_id']:25s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
 
-            # 2. Upsert the 17 SEC-INJ-* rules.
-            created = updated = 0
-            for rule in RULES:
-                result = await session.run(
-                    "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x", rid=rule["rule_id"]
-                )
-                exists = await result.single() is not None
-                # MERGE semantics on rule_id; SET overwrites all listed props.
-                props = {k: v for k, v in rule.items() if k != "rule_id"}
-                await session.run(
-                    """
-                    MERGE (r:Rule {rule_id: $rid})
-                    SET r += $props
-                    """,
-                    rid=rule["rule_id"], props=props,
-                )
-                if exists:
-                    updated += 1
-                    print(f"UPDATED {rule['rule_id']:25s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
-                else:
-                    created += 1
-                    print(f"CREATED {rule['rule_id']:25s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
+        print()
+        print(f"Summary: {created} created, {updated} updated.")
 
-            print()
-            print(f"Summary: {created} created, {updated} updated.")
-
-            # 3. Sanity check
-            r = await session.run("MATCH (r:Rule) RETURN count(r) AS n")
-            print(f"Total rules: {(await r.single())['n']}")
-            r = await session.run("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
-            print(f"Mandatory: {(await r.single())['n']}")
+        # 3. Sanity check
+        rows = db._execute_query("MATCH (r:Rule) RETURN count(r) AS n")
+        print(f"Total rules: {rows[0]['n']}")
+        rows = db._execute_query("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
+        print(f"Mandatory: {rows[0]['n']}")
     finally:
         await db.close()
 

@@ -6,7 +6,7 @@ path: marketplace add, plugin install, bootstrap, and health check.
 
 To run manually:
   1. Ensure claude CLI is installed and authenticated.
-  2. Ensure Docker is running (for Neo4j).
+  2. Ensure Redis is running (for graph DB).
   3. Set: export WRIT_INTEGRATION_TESTS=1
   4. Run: pytest tests/plugin/test_fresh_install_smoke.py -v
 

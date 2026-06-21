@@ -4,7 +4,7 @@ The tool lets the user capture only the lines appended to
 workflow-friction.log between a pre-run snapshot and a post-run call.
 Stateless besides a single .friction-snapshot file holding the byte offset.
 
-Per plan.md: 50-80 lines, no Neo4j, no LLM. Pure file I/O.
+Per plan.md: 50-80 lines, no graph DB, no LLM. Pure file I/O.
 """
 from __future__ import annotations
 

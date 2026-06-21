@@ -2,7 +2,7 @@
 
 Tests pipeline mechanics, ranking, context budget, and service endpoints.
 MRR@5 evaluation happens via human review sessions, not automated tests.
-Requires Neo4j running with migrated rules.
+Requires FalkorDB running with migrated rules.
 """
 
 from __future__ import annotations
@@ -12,8 +12,6 @@ import time
 import pytest
 import pytest_asyncio
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
 from writ.graph.ingest import discover_rule_files, parse_rules_from_file
 from writ.retrieval.pipeline import build_pipeline
 from writ.retrieval.ranking import (
@@ -25,72 +23,37 @@ from writ.retrieval.ranking import (
 from writ.retrieval.traversal import AdjacencyCache
 from pathlib import Path
 
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
-
-
-@pytest_asyncio.fixture(scope="module")
-async def pipeline_db():
-    """Shared db connection with migrated rules for pipeline tests.
-
-    Setup wipes Neo4j and reloads from `bible/`. Teardown wipes again
-    AND re-runs the methodology migration so subsequent tests in the
-    full-suite run see a populated graph (otherwise tests that depend
-    on Skill/Playbook/etc. nodes would silently misbehave -- the
-    isolation issue that bit Phase 6j integration verification).
-    """
-    import subprocess
-    import sys
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
+async def pipeline_db(_session_db):
+    """Module-scoped db pre-loaded with bible rules."""
     from pathlib import Path
 
-    from tests._writ_cmd import WRIT_CMD_PREFIX
-
-    db = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-    await db.clear_all()
-
-    # Migrate real rules.
     bible_dir = Path("bible/")
     if bible_dir.exists():
-        rule_ids_in_graph = set()
+        rule_ids_in_graph: set[str] = set()
         all_rules: list[dict] = []
         for f in discover_rule_files(bible_dir):
             for rule_data in parse_rules_from_file(f):
                 clean = {k: v for k, v in rule_data.items() if not k.startswith("_")}
-                await db.create_rule(clean)
+                await _session_db.create_rule(clean)
                 rule_ids_in_graph.add(clean["rule_id"])
                 all_rules.append(rule_data)
 
-        # Create skeleton edges.
         for rule_data in all_rules:
             for ref_id in rule_data.get("_cross_references", []):
                 if ref_id in rule_ids_in_graph:
-                    await db.create_edge("RELATED_TO", rule_data["rule_id"], ref_id)
+                    await _session_db.create_edge("RELATED_TO", rule_data["rule_id"], ref_id)
 
-    yield db
-
-    await db.clear_all()
-    await db.close()
-
-    # Restore production-like state for downstream tests via the
-    # migration script. Best-effort -- if the script is missing or
-    # fails, downstream tests will hit empty Neo4j (the original
-    # isolation bug); we surface that via stderr but do not raise.
-    try:
-        subprocess.run(
-            [*WRIT_CMD_PREFIX, "import-markdown", "bible/"],
-            cwd=str(Path.home() / ".claude/skills/writ"),
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
-    except (subprocess.SubprocessError, OSError) as e:
-        sys.stderr.write(
-            f"[test_retrieval teardown] writ import-markdown restore failed: {e}\n"
-        )
+    yield _session_db
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest_asyncio.fixture(autouse=True, scope="module", loop_scope="session")
+async def _clear_db(_session_db):
+    """Override conftest's autouse clear so bible data persists."""
+    pass
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="session")
 async def pipeline(pipeline_db):
     """Built pipeline with pre-warmed indexes."""
     p = await build_pipeline(pipeline_db)
@@ -244,28 +207,20 @@ class TestAdjacencyCache:
     """Adjacency cache tests."""
 
     @pytest.mark.asyncio
-    async def test_cache_matches_neo4j(self) -> None:
-        db = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-        try:
-            cache = AdjacencyCache()
-            await cache.build_from_db(db)
-            assert cache.size > 0
-        finally:
-            await db.close()
+    async def test_cache_matches_db(self, db) -> None:
+        cache = AdjacencyCache()
+        await cache.build_from_db(db)
+        assert cache.size > 0
 
     @pytest.mark.asyncio
-    async def test_cache_lookup_speed(self) -> None:
-        db = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-        try:
-            cache = AdjacencyCache()
-            await cache.build_from_db(db)
+    async def test_cache_lookup_speed(self, db) -> None:
+        cache = AdjacencyCache()
+        await cache.build_from_db(db)
 
-            # Measure 1000 lookups.
-            start = time.perf_counter()
-            for _ in range(1000):
-                cache.get_neighbors("ARCH-ORG-001")
-            elapsed_us = (time.perf_counter() - start) * 1_000_000 / 1000
-            print(f"\nCache lookup: {elapsed_us:.2f}us per call")
-            assert elapsed_us < 100, f"Cache lookup {elapsed_us:.0f}us exceeds 100us budget"
-        finally:
-            await db.close()
+        # Measure 1000 lookups.
+        start = time.perf_counter()
+        for _ in range(1000):
+            cache.get_neighbors("ARCH-ORG-001")
+        elapsed_us = (time.perf_counter() - start) * 1_000_000 / 1000
+        print(f"\nCache lookup: {elapsed_us:.2f}us per call")
+        assert elapsed_us < 100, f"Cache lookup {elapsed_us:.0f}us exceeds 100us budget"

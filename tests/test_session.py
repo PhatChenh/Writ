@@ -117,16 +117,13 @@ class TestLoadedRuleIdsExclusion:
     """Tests pipeline.query() with loaded_rule_ids parameter."""
 
     @pytest_asyncio.fixture()
-    async def pipeline(self):
+    async def pipeline(self, db):
         """Build a pipeline with migrated rules."""
         from pathlib import Path
 
-        from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-        from writ.graph.db import Neo4jConnection
         from writ.graph.ingest import discover_rule_files, parse_rules_from_file, validate_parsed_rule
         from writ.retrieval.pipeline import build_pipeline
 
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
         count = await db.count_rules()
         if count == 0:
             bible = Path("bible/")
@@ -135,11 +132,8 @@ class TestLoadedRuleIdsExclusion:
                     validate_parsed_rule(rd)
                     clean = {k: v for k, v in rd.items() if not k.startswith("_")}
                     await db.create_rule(clean)
-        try:
-            p = await build_pipeline(db)
-            yield p
-        finally:
-            await db.close()
+        p = await build_pipeline(db)
+        yield p
 
     @pytest.mark.asyncio()
     async def test_loaded_rule_ids_excluded(self, pipeline) -> None:
@@ -186,17 +180,6 @@ class TestLoadedRuleIdsExclusion:
 # ---------------------------------------------------------------------------
 
 class TestRuleAbstractionMembership:
-
-    @pytest_asyncio.fixture()
-    async def db(self):
-        from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-        from writ.graph.db import Neo4jConnection
-
-        conn = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
-        await conn.clear_all()
-        yield conn
-        await conn.clear_all()
-        await conn.close()
 
     @pytest.mark.asyncio()
     async def test_rule_with_abstraction_returns_membership(self, db) -> None:
@@ -269,15 +252,12 @@ class TestRuleAbstractionMembership:
 class TestMultiQuerySession:
 
     @pytest_asyncio.fixture()
-    async def pipeline(self):
+    async def pipeline(self, db):
         from pathlib import Path
 
-        from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-        from writ.graph.db import Neo4jConnection
         from writ.graph.ingest import discover_rule_files, parse_rules_from_file, validate_parsed_rule
         from writ.retrieval.pipeline import build_pipeline
 
-        db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
         # Ensure rules are migrated (previous tests may have cleared DB).
         count = await db.count_rules()
         if count == 0:
@@ -287,11 +267,8 @@ class TestMultiQuerySession:
                     validate_parsed_rule(rd)
                     clean = {k: v for k, v in rd.items() if not k.startswith("_")}
                     await db.create_rule(clean)
-        try:
-            p = await build_pipeline(db)
-            yield p
-        finally:
-            await db.close()
+        p = await build_pipeline(db)
+        yield p
 
     @pytest.mark.asyncio()
     async def test_3_query_no_duplicates(self, pipeline) -> None:

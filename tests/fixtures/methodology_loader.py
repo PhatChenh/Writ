@@ -1,6 +1,6 @@
 """Parse the methodology corpus into node dicts for Phase 0 benchmarks.
 
-Phase 0 harness reads this corpus without ingesting into Neo4j (plan Section 5.5
+Phase 0 harness reads this corpus without ingesting into the graph (plan Section 5.5
 says Phase 0 is read-only to production). Phase 1 ingest replaces this loader
 with the real parser. Phase 6e/f/g promoted the corpus from
 `tests/fixtures/synthetic_methodology/` to `bible/methodology/` (committed).

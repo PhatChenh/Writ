@@ -21,8 +21,6 @@ WRIT_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}"
 VENV_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/.venv"
 SERVER_URL="${WRIT_SERVER_URL:-http://localhost:8765}"
 SERVER_HEALTH_URL="http://localhost:8765/health"
-NEO4J_HOST="${WRIT_NEO4J_HOST:-localhost}"
-NEO4J_PORT="${WRIT_NEO4J_PORT:-7687}"
 
 # 2. Probe venv. If missing, instruct user and exit 0.
 if [ ! -x "${VENV_DIR}/bin/python3" ]; then
@@ -35,26 +33,14 @@ MSG
   exit 0
 fi
 
-# 3. Probe Neo4j bolt port 7687. If unreachable, instruct user and exit 0.
-if ! (exec 3<>/dev/tcp/"${NEO4J_HOST}"/"${NEO4J_PORT}") 2>/dev/null; then
-  cat >&2 <<MSG
-[Writ] Neo4j not reachable at ${NEO4J_HOST}:${NEO4J_PORT}.
-[Writ] Start it with:
-[Writ]   docker compose -f ${WRIT_DIR}/docker-compose.yml up -d neo4j
-[Writ] Writ hooks will degrade gracefully until Neo4j is up.
-MSG
-  exit 0
-fi
-exec 3<&- 2>/dev/null || true
-exec 3>&- 2>/dev/null || true
 
-# 4. Probe server health at http://localhost:8765/health. If already
+# 3. Probe server health at http://localhost:8765/health. If already
 #    running, we're done.
 if curl -fsS --max-time 1 "${SERVER_HEALTH_URL}" >/dev/null 2>&1; then
   exit 0
 fi
 
-# 5. Start the server in the background. cd into WRIT_DIR so writ.toml is
+# 4. Start the server in the background. cd into WRIT_DIR so writ.toml is
 #    read from the plugin install dir, not the user's cwd.
 (
   cd "${WRIT_DIR}" || exit 0

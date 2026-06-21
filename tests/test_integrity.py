@@ -1,7 +1,7 @@
 """Phase 4: Integrity check tests.
 
 Tests that IntegrityChecker detects known problems in crafted fixtures.
-Requires Neo4j running with test data.
+Requires FalkorDB running with test data.
 Each test is isolated (TEST-ISO-001).
 """
 
@@ -10,15 +10,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import pytest
-import pytest_asyncio
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
 from writ.graph.integrity import IntegrityChecker
-
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
 
 
 def _make_rule(
@@ -50,25 +43,16 @@ def _make_rule(
     }
 
 
-@pytest_asyncio.fixture()
-async def db():
-    conn = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-    await conn.clear_all()
-    yield conn
-    await conn.clear_all()
-    await conn.close()
-
-
 @pytest.fixture()
-def checker(db: Neo4jConnection) -> IntegrityChecker:
-    return IntegrityChecker(db._driver, db._database)
+def checker(db) -> IntegrityChecker:
+    return IntegrityChecker(db)
 
 
 class TestConflictDetection:
     """CONFLICTS_WITH edge detection."""
 
     @pytest.mark.asyncio
-    async def test_conflict_detected(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_conflict_detected(self, db, checker: IntegrityChecker) -> None:
         await db.create_rule(_make_rule("RULE-A-001"))
         await db.create_rule(_make_rule("RULE-B-001"))
         await db.create_edge("CONFLICTS_WITH", "RULE-A-001", "RULE-B-001")
@@ -80,7 +64,7 @@ class TestConflictDetection:
         assert pair["rule_b"] == "RULE-B-001"
 
     @pytest.mark.asyncio
-    async def test_no_false_positives(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_no_false_positives(self, db, checker: IntegrityChecker) -> None:
         await db.create_rule(_make_rule("RULE-A-001"))
         await db.create_rule(_make_rule("RULE-B-001"))
         await db.create_edge("DEPENDS_ON", "RULE-A-001", "RULE-B-001")
@@ -93,14 +77,14 @@ class TestOrphanDetection:
     """Rules with zero edges."""
 
     @pytest.mark.asyncio
-    async def test_orphan_flagged(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_orphan_flagged(self, db, checker: IntegrityChecker) -> None:
         await db.create_rule(_make_rule("ORPHAN-RULE-001"))
 
         orphans = await checker.detect_orphans()
         assert "ORPHAN-RULE-001" in orphans
 
     @pytest.mark.asyncio
-    async def test_connected_rule_not_orphan(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_connected_rule_not_orphan(self, db, checker: IntegrityChecker) -> None:
         await db.create_rule(_make_rule("RULE-A-001"))
         await db.create_rule(_make_rule("RULE-B-001"))
         await db.create_edge("RELATED_TO", "RULE-A-001", "RULE-B-001")
@@ -114,7 +98,7 @@ class TestStalenessDetection:
     """Rules past staleness window."""
 
     @pytest.mark.asyncio
-    async def test_stale_rule_flagged(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_stale_rule_flagged(self, db, checker: IntegrityChecker) -> None:
         old_date = (date.today() - timedelta(days=400)).isoformat()
         await db.create_rule(_make_rule("STALE-RULE-001", last_validated=old_date, staleness_window=365))
 
@@ -123,7 +107,7 @@ class TestStalenessDetection:
         assert "STALE-RULE-001" in stale_ids
 
     @pytest.mark.asyncio
-    async def test_fresh_rule_not_flagged(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_fresh_rule_not_flagged(self, db, checker: IntegrityChecker) -> None:
         today = date.today().isoformat()
         await db.create_rule(_make_rule("FRESH-RULE-001", last_validated=today))
 
@@ -136,7 +120,7 @@ class TestRedundancyDetection:
     """Near-identical rule content detection."""
 
     @pytest.mark.asyncio
-    async def test_near_identical_flagged(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_near_identical_flagged(self, db, checker: IntegrityChecker) -> None:
         await db.create_rule(_make_rule(
             "DUP-A-001",
             trigger="Controller must not contain SQL queries directly",
@@ -155,7 +139,7 @@ class TestRedundancyDetection:
         assert ids == {"DUP-A-001", "DUP-B-001"}
 
     @pytest.mark.asyncio
-    async def test_different_rules_clean(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_different_rules_clean(self, db, checker: IntegrityChecker) -> None:
         await db.create_rule(_make_rule(
             "DIFF-A-001",
             trigger="SQL query uses positional placeholders",
@@ -173,7 +157,7 @@ class TestRedundancyDetection:
     @pytest.mark.asyncio
     async def test_detect_redundant_raises_when_sentence_transformers_missing(
         self,
-        db: Neo4jConnection,
+        db,
         checker: IntegrityChecker,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -223,7 +207,7 @@ class TestRunAllChecks:
     """Orchestrator behavior."""
 
     @pytest.mark.asyncio
-    async def test_clean_graph_returns_zero(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_clean_graph_returns_zero(self, db, checker: IntegrityChecker) -> None:
         await db.create_rule(_make_rule("RULE-A-001"))
         await db.create_rule(_make_rule("RULE-B-001"))
         await db.create_edge("RELATED_TO", "RULE-A-001", "RULE-B-001")
@@ -232,7 +216,7 @@ class TestRunAllChecks:
         assert findings["exit_code"] == 0
 
     @pytest.mark.asyncio
-    async def test_any_finding_returns_nonzero(self, db: Neo4jConnection, checker: IntegrityChecker) -> None:
+    async def test_any_finding_returns_nonzero(self, db, checker: IntegrityChecker) -> None:
         await db.create_rule(_make_rule("RULE-A-001"))
         await db.create_rule(_make_rule("RULE-B-001"))
         await db.create_edge("CONFLICTS_WITH", "RULE-A-001", "RULE-B-001")
@@ -244,7 +228,7 @@ class TestRunAllChecks:
     @pytest.mark.asyncio
     async def test_run_all_checks_sets_redundancy_unavailable_when_library_missing(
         self,
-        db: Neo4jConnection,
+        db,
         checker: IntegrityChecker,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:

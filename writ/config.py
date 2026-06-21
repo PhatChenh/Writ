@@ -8,6 +8,8 @@ Per ARCH-CONST-001: all tunables must live in writ.toml with named constant defa
 from __future__ import annotations
 
 import os
+import platform
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +22,7 @@ except ModuleNotFoundError:
 DEFAULT_FALKORDB_PATH = ".writ/graph.db"
 DEFAULT_FALKORDB_GRAPH = "writ"
 DEFAULT_FALKORDB_MODULE = "vendor/falkordb.so"
-DEFAULT_REDIS_BIN = "/opt/homebrew/opt/redis/bin/redis-server"
+_HOMEBREW_ARM64_REDIS = "/opt/homebrew/opt/redis/bin/redis-server"
 DEFAULT_HNSW_CACHE_DIR = str(Path.home() / ".cache" / "writ" / "hnsw")
 
 # Default config file path: writ.toml in the package root (one level above writ/).
@@ -63,9 +65,28 @@ def get_falkordb_module(path: str | None = None) -> str:
 
 
 def get_redis_bin(path: str | None = None) -> str:
-    """Return falkordb.redis_bin from config, falling back to DEFAULT_REDIS_BIN."""
+    """Resolve the redis-server binary path at runtime.
+
+    Resolution order (Apple-Silicon-only per D9):
+    1. writ.toml [falkordb] redis_bin override
+    2. shutil.which("redis-server") — PATH lookup
+    3. Homebrew arm64 default (/opt/homebrew/opt/redis/bin/redis-server)
+    4. On x86_64: explicit error (not supported)
+    """
     cfg = load_config(path)
-    return cfg.get("falkordb", {}).get("redis_bin", DEFAULT_REDIS_BIN)
+    override = cfg.get("falkordb", {}).get("redis_bin")
+    if override:
+        return override
+    found = shutil.which("redis-server")
+    if found:
+        return found
+    if platform.machine() == "arm64":
+        return _HOMEBREW_ARM64_REDIS
+    raise RuntimeError(
+        "redis-server not found on PATH and no writ.toml [falkordb] redis_bin override. "
+        f"x86_64 not supported (Apple-Silicon-only, D9). "
+        "Install redis: brew install redis"
+    )
 
 
 def get_hnsw_cache_dir(path: str | None = None) -> str:

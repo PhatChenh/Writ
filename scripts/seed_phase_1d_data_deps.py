@@ -1,6 +1,6 @@
 """Phase 1D of the public rulebook expansion: Data Protection + Dependencies.
 
-Seeds 10 new SEC-DATA-* and SEC-DEP-* rules into Neo4j (1 mandatory),
+Seeds 10 new SEC-DATA-* and SEC-DEP-* rules into the graph (1 mandatory),
 renames the legacy SEC-UNI-003 -> SEC-DATA-PII-002 (broader public-rulebook
 phrasing), and deletes ENF-SEC-002 as a duplicate of SEC-DATA-PII-002.
 
@@ -14,8 +14,8 @@ from __future__ import annotations
 import asyncio
 from datetime import date
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 
 TODAY = date.today().isoformat()
 
@@ -202,52 +202,54 @@ RULES = DATA_RULES + DEP_RULES
 
 
 async def main() -> None:
-    db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+    db = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     try:
-        async with db._driver.session(database=db._database) as session:
-            # 1. Rename legacy SEC-UNI-003 -> SEC-DATA-PII-002 by deleting
-            #    the old ID.
-            await session.run(
-                "MATCH (r:Rule {rule_id: 'SEC-UNI-003'}) DETACH DELETE r"
+        # 1. Rename legacy SEC-UNI-003 -> SEC-DATA-PII-002 by deleting
+        #    the old ID.
+        db._execute_query(
+            "MATCH (r:Rule {rule_id: 'SEC-UNI-003'}) DETACH DELETE r"
+        )
+        print("DELETED SEC-UNI-003 (absorbed into SEC-DATA-PII-002)")
+
+        # 2. Delete ENF-SEC-002 as a duplicate of SEC-DATA-PII-002
+        #    (both required field allowlists in API responses).
+        db._execute_query(
+            "MATCH (r:Rule {rule_id: 'ENF-SEC-002'}) DETACH DELETE r"
+        )
+        print("DELETED ENF-SEC-002 (duplicate of SEC-DATA-PII-002)")
+
+        # 3. Upsert the 10 SEC-DATA-*, SEC-DEP-* rules.
+        created = updated = 0
+        for rule in RULES:
+            rows = db._execute_query(
+                "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x", rid=rule["rule_id"]
             )
-            print("DELETED SEC-UNI-003 (absorbed into SEC-DATA-PII-002)")
-
-            # 2. Delete ENF-SEC-002 as a duplicate of SEC-DATA-PII-002
-            #    (both required field allowlists in API responses).
-            await session.run(
-                "MATCH (r:Rule {rule_id: 'ENF-SEC-002'}) DETACH DELETE r"
+            exists = bool(rows)
+            props = {k: v for k, v in rule.items() if k != "rule_id"}
+            db._execute_query(
+                """
+                MERGE (r:Rule {rule_id: $rid})
+                SET r += $props
+                """,
+                rid=rule["rule_id"], props=props,
             )
-            print("DELETED ENF-SEC-002 (duplicate of SEC-DATA-PII-002)")
+            if exists:
+                updated += 1
+                print(f"UPDATED {rule['rule_id']:30s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
+            else:
+                created += 1
+                print(f"CREATED {rule['rule_id']:30s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
 
-            # 3. Upsert the 10 SEC-DATA-*, SEC-DEP-* rules.
-            created = updated = 0
-            for rule in RULES:
-                result = await session.run(
-                    "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x", rid=rule["rule_id"]
-                )
-                exists = await result.single() is not None
-                props = {k: v for k, v in rule.items() if k != "rule_id"}
-                await session.run(
-                    """
-                    MERGE (r:Rule {rule_id: $rid})
-                    SET r += $props
-                    """,
-                    rid=rule["rule_id"], props=props,
-                )
-                if exists:
-                    updated += 1
-                    print(f"UPDATED {rule['rule_id']:30s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
-                else:
-                    created += 1
-                    print(f"CREATED {rule['rule_id']:30s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
+        print()
+        print(f"Summary: {created} created, {updated} updated.")
 
-            print()
-            print(f"Summary: {created} created, {updated} updated.")
-
-            r = await session.run("MATCH (r:Rule) RETURN count(r) AS n")
-            print(f"Total rules: {(await r.single())['n']}")
-            r = await session.run("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
-            print(f"Mandatory: {(await r.single())['n']}")
+        rows = db._execute_query("MATCH (r:Rule) RETURN count(r) AS n")
+        print(f"Total rules: {rows[0]['n']}")
+        rows = db._execute_query("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
+        print(f"Mandatory: {rows[0]['n']}")
     finally:
         await db.close()
 

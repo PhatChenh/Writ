@@ -3,8 +3,9 @@
 #
 # Runs prerequisite checks, creates a Python venv, installs the package,
 # renders the harness config from templates, symlinks rules and agent
-# definitions, brings up Neo4j via docker compose, ingests the rule
-# corpus, and starts the Writ daemon. Idempotent -- safe to re-run.
+# definitions, ensures Redis is available, downloads the FalkorDB module,
+# ingests the rule corpus, and starts the Writ daemon.
+# Idempotent -- safe to re-run.
 #
 # Usage:
 #   cd ~/.claude/skills/writ
@@ -13,16 +14,18 @@
 set -euo pipefail
 
 # ── Tunables (named constants per ARCH-CONST-001) ───────────────────────────
-readonly NEO4J_WAIT_SECONDS=60   # Max wait for Neo4j bolt port after `compose up`
 readonly DAEMON_WAIT_SECONDS=10  # Max wait for writ serve /health after launch
 readonly MIN_PYTHON_MAJOR=3
 readonly MIN_PYTHON_MINOR=11
+readonly FALKORDB_VERSION="v4.14.6"
+readonly FALKORDB_SO="falkordb-macos-arm64v8.so"
+readonly FALKORDB_URL="https://github.com/FalkorDB/FalkorDB/releases/download/${FALKORDB_VERSION}/${FALKORDB_SO}"
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WRIT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENV_DIR="$WRIT_DIR/.venv"
-COMPOSE_FILE="$WRIT_DIR/docker-compose.yml"
+VENDOR_DIR="$WRIT_DIR/vendor"
 
 # ── Colors (ANSI, degrade gracefully on dumb terminals) ─────────────────────
 if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
@@ -56,7 +59,7 @@ require_tool() {
 
 missing=0
 require_tool python3 "Install Python 3.11+ (e.g., apt install python3 python3-venv / brew install python@3.11)." || missing=1
-require_tool docker  "Install Docker (https://docs.docker.com/get-docker/) and ensure Docker Desktop is running." || missing=1
+require_tool brew    "Install Homebrew (https://brew.sh/)." || missing=1
 require_tool git     "Install git (apt install git / brew install git)." || missing=1
 require_tool envsubst "Install gettext (apt install gettext-base / brew install gettext)." || missing=1
 if [ $missing -ne 0 ]; then
@@ -76,14 +79,33 @@ if [ "$PY_MAJOR" -lt "$MIN_PYTHON_MAJOR" ] \
 fi
 ok "python3 $PY_VER"
 
-# ── 2. Docker daemon reachable ──────────────────────────────────────────────
-step "Checking Docker daemon"
-if ! docker info >/dev/null 2>&1; then
-    err "Docker daemon not reachable."
-    echo "   Start Docker Desktop (or run \`sudo systemctl start docker\`) and retry." >&2
+# ── 2. Platform check and Redis ensure ────────────────────────────────────
+step "Checking platform and Redis"
+
+# Apple Silicon only (D9)
+ARCH=$(uname -m)
+if [ "$ARCH" != "arm64" ]; then
+    err "Unsupported architecture: $ARCH"
+    echo "   Writ requires Apple Silicon (arm64). x86_64 is not supported (D9)." >&2
     exit 1
 fi
-ok "docker daemon reachable"
+ok "Apple Silicon ($ARCH)"
+
+# Ensure /opt/homebrew/bin is on PATH so shutil.which() resolves
+if ! echo "$PATH" | grep -q "/opt/homebrew/bin"; then
+    export PATH="/opt/homebrew/bin:$PATH"
+fi
+
+# Ensure Redis is installed (via Homebrew, skip if present)
+if command -v redis-server >/dev/null 2>&1; then
+    ok "redis-server found on PATH"
+elif brew list redis >/dev/null 2>&1; then
+    ok "redis already installed (Homebrew)"
+else
+    printf "   installing redis via Homebrew... "
+    brew install redis >/dev/null 2>&1
+    ok "redis installed"
+fi
 
 # ── 3. Python venv ──────────────────────────────────────────────────────────
 step "Setting up Python virtualenv"
@@ -144,28 +166,16 @@ link_all "$WRIT_DIR/rules" "$HOME/.claude/rules"
 link_all "$WRIT_DIR/.claude/agents" "$HOME/.claude/agents"
 ok "rules and agents linked"
 
-# ── 7. Start Neo4j via docker compose ──────────────────────────────────────
-step "Starting Neo4j via docker compose"
-(cd "$WRIT_DIR" && docker compose up -d neo4j) >/dev/null
-ok "neo4j container started"
-
-printf "   waiting for bolt port 7687 "
-waited=0
-while [ $waited -lt $NEO4J_WAIT_SECONDS ]; do
-    if (echo > /dev/tcp/127.0.0.1/7687) 2>/dev/null; then
-        printf "\n"
-        ok "Neo4j bolt port ready"
-        break
-    fi
-    printf "."
-    sleep 1
-    waited=$((waited + 1))
-done
-if [ $waited -ge $NEO4J_WAIT_SECONDS ]; then
-    printf "\n"
-    err "Neo4j did not become reachable within ${NEO4J_WAIT_SECONDS}s"
-    echo "   Check logs: docker compose -f $COMPOSE_FILE logs neo4j" >&2
-    exit 1
+# ── 7. Download FalkorDB module ───────────────────────────────────────────
+step "Ensuring FalkorDB module"
+mkdir -p "$VENDOR_DIR"
+FALKORDB_SO_PATH="$VENDOR_DIR/falkordb.so"
+if [ -f "$FALKORDB_SO_PATH" ]; then
+    ok "falkordb.so already present (skipping download)"
+else
+    printf "   downloading falkordb-macos-arm64v8.so (${FALKORDB_VERSION})... "
+    curl -sSL "$FALKORDB_URL" -o "$FALKORDB_SO_PATH"
+    ok "falkordb.so downloaded"
 fi
 
 # ── 8. Ingest rules ────────────────────────────────────────────────────────
@@ -173,7 +183,7 @@ step "Ingesting rule corpus from bible/"
 if writ import-markdown 2>&1 | tail -5; then
     ok "rules ingested"
 else
-    warn "ingestion reported errors; daemon will serve whatever made it into Neo4j"
+    warn "ingestion reported errors; daemon will serve whatever made it into the graph"
 fi
 
 # ── 9. Start Writ daemon ───────────────────────────────────────────────────
@@ -213,7 +223,6 @@ RULE_COUNT=$(curl -sf "http://localhost:8765/stats" 2>/dev/null \
 printf "\n${GREEN}${BOLD}════════════════════════════════════════════${RESET}\n"
 printf "${GREEN}${BOLD}  Writ is ready${RESET}\n"
 printf "${GREEN}${BOLD}════════════════════════════════════════════${RESET}\n"
-printf "  Neo4j          : bolt://localhost:7687\n"
 printf "  Writ daemon    : http://localhost:8765\n"
 printf "  Rules loaded   : %s\n" "$RULE_COUNT"
 printf "  Daemon log     : /tmp/writ-server.log\n"

@@ -10,7 +10,7 @@ an in-process BM25 + ONNX-vector pipeline (mirrors Writ's Stages 2-3-5), and
 reports MRR@5, hit rate, bundle completeness, p95 latency against plan
 Section 5.3 release-blocker thresholds.
 
-Does NOT touch Neo4j. Does NOT use `writ serve`. Read-only to production per
+Does NOT touch the graph DB. Does NOT use `writ serve`. Read-only to production per
 plan Section 5.5.
 """
 from __future__ import annotations

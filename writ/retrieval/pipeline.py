@@ -464,7 +464,7 @@ def _fold_auxiliary_text_into_body(node: dict, label: str) -> str:
     if existing_body:
         parts.append(existing_body)
     if label == "ForbiddenResponse":
-        # Fields may arrive as JSON strings from Neo4j (since we json.dumps'd
+        # Fields may arrive as JSON strings from the graph (since we json.dumps'd
         # nested structures during ingest) or as native lists.
         phrases = node.get("forbidden_phrases")
         if isinstance(phrases, str):
@@ -504,7 +504,7 @@ async def build_pipeline(
     (Phase, Rationalization, PressureScenario, WorkedExample, SubagentRole)
     enter Stage 4 via the adjacency cache but do not appear as candidates.
     """
-    # Load all non-mandatory rules from Neo4j.
+    # Load all non-mandatory rules from the graph.
     query = """
         MATCH (r:Rule)
         WHERE r.mandatory IS NULL OR r.mandatory = false

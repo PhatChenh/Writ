@@ -1,6 +1,6 @@
 """Markdown export from graph: generates bible/ as a derived view.
 
-bible/ is a derived exported view of the canonical Neo4j graph, not a source
+bible/ is a derived exported view of the canonical graph, not a source
 of truth. The graph is canonical. Use `writ import-markdown` only for initial
 bootstrap or when re-importing after manual Markdown edits.
 
@@ -132,7 +132,7 @@ async def export_rules_to_markdown(
     """Export all rules from graph to Markdown files.
 
     Args:
-        db: Neo4j connection.
+        db: Graph connection.
         output_dir: Directory to write exported files.
         bible_dir: Existing bible directory for structure mapping.
                    Defaults to output_dir (in-place export).

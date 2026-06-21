@@ -80,16 +80,16 @@ class TestExportCheckMode:
     """--check verifies existing files match graph; exit 0 if clean."""
 
     def test_export_check_passes_after_ingest(self) -> None:
-        """After ingest, --check must report clean. If it fails, the Neo4j
+        """After ingest, --check must report clean. If it fails, the graph DB
         fixture is unavailable -- skip rather than fail the suite."""
         proc = subprocess.run(
             [".venv/bin/python", str(EXPORT_SCRIPT), "--check"],
             capture_output=True, text=True, cwd=str(WRIT_ROOT),
         )
         if proc.returncode != 0 and "No SubagentRole nodes" in proc.stderr:
-            pytest.skip("SubagentRole nodes not present in Neo4j (fixture unavailable)")
+            pytest.skip("SubagentRole nodes not present in graph DB (fixture unavailable)")
         if proc.returncode != 0 and "refused" in proc.stderr.lower():
-            pytest.skip("Neo4j not reachable")
+            pytest.skip("Graph DB not reachable")
         assert proc.returncode == 0, f"Drift detected: {proc.stdout}\n{proc.stderr}"
 
 
@@ -103,7 +103,7 @@ class TestExportDryRun:
             capture_output=True, text=True, cwd=str(WRIT_ROOT),
         )
         if proc.returncode != 0 and ("No SubagentRole" in proc.stderr or "refused" in proc.stderr.lower()):
-            pytest.skip("Neo4j fixture unavailable")
+            pytest.skip("graph DB fixture unavailable")
         assert proc.returncode == 0
         assert "DRY RUN" in proc.stdout
         after = {p.name: p.read_text() for p in AGENTS_DIR.glob("*.md")}

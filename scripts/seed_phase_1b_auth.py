@@ -1,6 +1,6 @@
 """Phase 1B of the public rulebook expansion: Authentication + Authorization + Input Validation.
 
-Seeds 25 new SEC-AUTH-*, SEC-AUTHZ-*, and SEC-VAL-* rules into Neo4j
+Seeds 25 new SEC-AUTH-*, SEC-AUTHZ-*, and SEC-VAL-* rules into the graph
 (8 mandatory) and renames the legacy SEC-UNI-001 / SEC-UNI-002 rules:
 
   SEC-UNI-001 (auth+ownership)        -> SEC-AUTHZ-ENFORCE-001
@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 from datetime import date
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 
 TODAY = date.today().isoformat()
 
@@ -418,50 +418,51 @@ RULES = AUTH_RULES + AUTHZ_RULES + VAL_RULES
 
 
 async def main() -> None:
-    db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+    db = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     try:
-        async with db._driver.session(database=db._database) as session:
-            # 1. Rename legacy SEC-UNI-001 -> SEC-AUTHZ-ENFORCE-001 and
-            #    SEC-UNI-002 -> SEC-AUTHZ-IDOR-001 by deleting the old IDs.
-            #    The new rules below carry the broader public-rulebook semantics;
-            #    the prior auth+ownership and ownership-code-path framings are
-            #    captured in the new rules' statements and pass examples.
-            for legacy in ("SEC-UNI-001", "SEC-UNI-002"):
-                result = await session.run(
-                    f"MATCH (r:Rule {{rule_id: '{legacy}'}}) DETACH DELETE r RETURN count(r) AS n"
-                )
-                row = await result.single()
-                print(f"DELETED {legacy} (absorbed into 1C public rulebook)")
+        # 1. Rename legacy SEC-UNI-001 -> SEC-AUTHZ-ENFORCE-001 and
+        #    SEC-UNI-002 -> SEC-AUTHZ-IDOR-001 by deleting the old IDs.
+        #    The new rules below carry the broader public-rulebook semantics;
+        #    the prior auth+ownership and ownership-code-path framings are
+        #    captured in the new rules' statements and pass examples.
+        for legacy in ("SEC-UNI-001", "SEC-UNI-002"):
+            rows = db._execute_query(
+                f"MATCH (r:Rule {{rule_id: '{legacy}'}}) DETACH DELETE r RETURN count(r) AS n"
+            )
+            print(f"DELETED {legacy} (absorbed into 1C public rulebook)")
 
-            # 2. Upsert the 27 SEC-AUTH-*, SEC-AUTHZ-*, SEC-VAL-* rules.
-            created = updated = 0
-            for rule in RULES:
-                result = await session.run(
-                    "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x", rid=rule["rule_id"]
-                )
-                exists = await result.single() is not None
-                props = {k: v for k, v in rule.items() if k != "rule_id"}
-                await session.run(
-                    """
-                    MERGE (r:Rule {rule_id: $rid})
-                    SET r += $props
-                    """,
-                    rid=rule["rule_id"], props=props,
-                )
-                if exists:
-                    updated += 1
-                    print(f"UPDATED {rule['rule_id']:30s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
-                else:
-                    created += 1
-                    print(f"CREATED {rule['rule_id']:30s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
+        # 2. Upsert the 27 SEC-AUTH-*, SEC-AUTHZ-*, SEC-VAL-* rules.
+        created = updated = 0
+        for rule in RULES:
+            rows = db._execute_query(
+                "MATCH (r:Rule {rule_id: $rid}) RETURN r.rule_id AS x", rid=rule["rule_id"]
+            )
+            exists = bool(rows)
+            props = {k: v for k, v in rule.items() if k != "rule_id"}
+            db._execute_query(
+                """
+                MERGE (r:Rule {rule_id: $rid})
+                SET r += $props
+                """,
+                rid=rule["rule_id"], props=props,
+            )
+            if exists:
+                updated += 1
+                print(f"UPDATED {rule['rule_id']:30s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
+            else:
+                created += 1
+                print(f"CREATED {rule['rule_id']:30s} {'[M]' if rule['mandatory'] else '   '} {rule['severity']}")
 
-            print()
-            print(f"Summary: {created} created, {updated} updated.")
+        print()
+        print(f"Summary: {created} created, {updated} updated.")
 
-            r = await session.run("MATCH (r:Rule) RETURN count(r) AS n")
-            print(f"Total rules: {(await r.single())['n']}")
-            r = await session.run("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
-            print(f"Mandatory: {(await r.single())['n']}")
+        rows = db._execute_query("MATCH (r:Rule) RETURN count(r) AS n")
+        print(f"Total rules: {rows[0]['n']}")
+        rows = db._execute_query("MATCH (r:Rule) WHERE r.mandatory = true RETURN count(r) AS n")
+        print(f"Mandatory: {rows[0]['n']}")
     finally:
         await db.close()
 

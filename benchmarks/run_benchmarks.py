@@ -1,6 +1,6 @@
 """Writ benchmark suite.
 
-Neo4j traversal benchmarks at 1K, 10K, 100K, 1M synthetic nodes.
+Graph traversal benchmarks at 1K, 10K, 100K, 1M synthetic nodes.
 Per PERF-OPT-001: optimization decisions require measurement.
 
 Run with: pytest benchmarks/run_benchmarks.py -v
@@ -14,12 +14,8 @@ import time
 
 import pytest
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
-
-NEO4J_URI = get_neo4j_uri()
-NEO4J_USER = get_neo4j_user()
-NEO4J_PASSWORD = get_neo4j_password()
+from writ.config import get_falkordb_graph, get_falkordb_module, get_falkordb_path, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 
 EDGES_PER_NODE = 4
 BENCHMARK_ITERATIONS = 100
@@ -65,7 +61,7 @@ def _generate_synthetic_graph(node_count: int) -> tuple[list[dict], list[tuple[s
     return nodes, edges
 
 
-async def _setup_graph(db: Neo4jConnection, node_count: int) -> None:
+async def _setup_graph(db: FalkorDBLiteConnection, node_count: int) -> None:
     """Insert synthetic graph data in batches."""
     nodes, edges = _generate_synthetic_graph(node_count)
 
@@ -78,8 +74,7 @@ async def _setup_graph(db: Neo4jConnection, node_count: int) -> None:
             MERGE (r:Rule {rule_id: rule.rule_id})
             SET r += rule
         """
-        async with db._driver.session(database=db._database) as session:
-            await session.run(query, batch=batch)
+        db._execute_query(query, {"batch": batch})
 
     # Batch insert edges.
     edge_batches: dict[str, list[dict]] = {}
@@ -95,11 +90,10 @@ async def _setup_graph(db: Neo4jConnection, node_count: int) -> None:
                 MATCH (b:Rule {{rule_id: edge.tgt}})
                 MERGE (a)-[:{etype}]->(b)
             """
-            async with db._driver.session(database=db._database) as session:
-                await session.run(query, batch=batch)
+            db._execute_query(query, {"batch": batch})
 
 
-async def _benchmark_traversal(db: Neo4jConnection, node_count: int, hops: int) -> dict:
+async def _benchmark_traversal(db: FalkorDBLiteConnection, node_count: int, hops: int) -> dict:
     """Run traversal benchmark and return latency stats."""
     # Pick random start nodes for benchmarking.
     start_ids = [f"BENCH-RULE-{random.randint(0, node_count - 1):07d}" for _ in range(BENCHMARK_ITERATIONS)]
@@ -136,11 +130,16 @@ def event_loop():
 
 
 class TestTraversalBenchmarks:
-    """Neo4j traversal benchmarks at multiple scales."""
+    """Graph traversal benchmarks at multiple scales."""
 
     @pytest.mark.asyncio
     async def test_benchmark_1k_nodes(self) -> None:
-        db = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+        db = FalkorDBLiteConnection(
+            db_path=get_falkordb_path(),
+            graph=get_falkordb_graph(),
+            module_path=get_falkordb_module(),
+            redis_bin=get_redis_bin(),
+        )
         try:
             await db.clear_all()
             await _setup_graph(db, 1000)
@@ -157,7 +156,12 @@ class TestTraversalBenchmarks:
 
     @pytest.mark.asyncio
     async def test_benchmark_10k_nodes(self) -> None:
-        db = Neo4jConnection(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+        db = FalkorDBLiteConnection(
+            db_path=get_falkordb_path(),
+            graph=get_falkordb_graph(),
+            module_path=get_falkordb_module(),
+            redis_bin=get_redis_bin(),
+        )
         try:
             await db.clear_all()
             await _setup_graph(db, 10_000)

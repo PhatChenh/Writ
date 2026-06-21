@@ -23,8 +23,8 @@ from collections import defaultdict
 
 import numpy as np
 
-from writ.config import get_neo4j_password, get_neo4j_uri, get_neo4j_user
-from writ.graph.db import Neo4jConnection
+from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
+from writ.graph.db import FalkorDBLiteConnection
 from writ.retrieval.embeddings import DEFAULT_ONNX_DIR, OnnxEmbeddingModel
 from writ.retrieval.keyword import KeywordIndex
 from writ.retrieval.pipeline import build_pipeline
@@ -82,20 +82,15 @@ async def _load_real_corpus(db) -> list[dict]:
         WHERE r.mandatory IS NULL OR r.mandatory = false
         RETURN r
     """
-    rules = []
-    async with db._driver.session(database=db._database) as session:
-        result = await session.run(query)
-        async for record in result:
-            rules.append(dict(record["r"]))
-    return rules
+    rows = db._execute_query(query)
+    return [row["r"] for row in rows]
 
 
 async def _count_edges(db) -> tuple[int, int]:
     edge_query = "MATCH ()-[r]->() RETURN count(r) AS edges"
     node_query = "MATCH (r:Rule) RETURN count(r) AS nodes"
-    async with db._driver.session(database=db._database) as session:
-        e = (await (await session.run(edge_query)).single())["edges"]
-        n = (await (await session.run(node_query)).single())["nodes"]
+    e = db._execute_query(edge_query)[0]["edges"]
+    n = db._execute_query(node_query)[0]["nodes"]
     return e, n
 
 
@@ -181,7 +176,10 @@ def _h4_intra_domain_similarity(real: list[dict], synth: list[dict]) -> None:
 
 
 async def main() -> None:
-    db = Neo4jConnection(get_neo4j_uri(), get_neo4j_user(), get_neo4j_password())
+    db = FalkorDBLiteConnection(
+        get_falkordb_path(), get_falkordb_graph(),
+        get_falkordb_module(), get_redis_bin(),
+    )
     try:
         real = await _load_real_corpus(db)
         synth = _generate_synthetic_rules(len(real))

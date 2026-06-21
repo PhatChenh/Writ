@@ -43,7 +43,7 @@ VALIDATE_RULES_P95_FLOOR_MS = 400.0
 PRE_WRITE_DISPATCH_P95_FLOOR_MS = 220.0
 
 # Untimed warmup iterations run before the timed loop to load module caches,
-# warm Neo4j connection pool, and prime any HTTP keep-alive.
+# warm graph DB connection pool, and prime any HTTP keep-alive.
 PERF_WARMUP = 3
 # Timed iterations for p95 measurement; keep modest for CI sanity.
 PERF_ITERATIONS = 20
