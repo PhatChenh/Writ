@@ -17,10 +17,12 @@ SESSION_HELPER="$WRIT_DIR/bin/lib/writ-session.py"
 source "$WRIT_DIR/bin/lib/common.sh"
 
 WRIT_HOST="${WRIT_HOST:-localhost}"
-WRIT_PORT="${WRIT_PORT:-8765}"
+# WRIT_PORT and WRIT_REPO_ROOT are derived PER-REPO by common.sh (D4-02 "A-auto").
+# The daemon is started with CWD = WRIT_REPO_ROOT so .writ/graph.db is per-repo;
+# the lockfile is per-PORT so concurrent repos don't block each other's startup.
 WRIT_URL="http://${WRIT_HOST}:${WRIT_PORT}/query"
 WRIT_HEALTH_URL="http://${WRIT_HOST}:${WRIT_PORT}/health"
-WRIT_LOCKFILE="/tmp/writ-server-starting.lock"
+WRIT_LOCKFILE="/tmp/writ-server-starting-${WRIT_PORT}.lock"
 WRIT_DEBUG_LOG="/tmp/writ-rag-debug.log"
 
 MIN_QUERY_LENGTH=10
@@ -32,6 +34,7 @@ debug() {
 # Capture stdin once -- Claude Code sends JSON with prompt, session_id, etc.
 STDIN_JSON=$(cat)
 debug "stdin: ${STDIN_JSON:0:200}"
+debug "repo_root=$WRIT_REPO_ROOT port=$WRIT_PORT"
 
 # Auto-start: ensure Writ server is running.
 # Uses a lockfile to prevent multiple hooks from racing to start the server.
@@ -44,7 +47,10 @@ if ! curl -sf --connect-timeout 0.2 "$WRIT_HEALTH_URL" >/dev/null 2>&1; then
         # Start Writ server in background
         if [ -f "$VENV_DIR/bin/python3" ]; then
             (
-                cd "$WRIT_DIR"
+                # D4-02: CWD = repo root so .writ/graph.db is per-repo. The writ
+                # package imports from the venv regardless of CWD; only the graph
+                # path is CWD-relative.
+                cd "$WRIT_REPO_ROOT"
                 nohup "$VENV_DIR/bin/python3" -m uvicorn writ.server:app --host 0.0.0.0 --port "$WRIT_PORT" >>/tmp/writ-server.log 2>&1 &
             )
             # Wait up to 5s for Writ health endpoint

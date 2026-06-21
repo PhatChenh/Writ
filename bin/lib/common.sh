@@ -254,6 +254,23 @@ while path != '/':
 # The function locates SESSION_HELPER from the calling script's WRIT_DIR
 # or falls back to the SKILL_DIR variable.
 
+# ── D4-02 "A-auto": per-repo daemon isolation ────────────────────────────────
+# Every hook sources this file, so deriving the per-repo port HERE makes all
+# hooks (and the _writ_session helpers below) agree on one port without
+# per-hook edits. An explicit WRIT_PORT env var always wins. Repo root = git
+# toplevel of the hook's CWD (Claude runs hooks at the project root); falls
+# back to the install dir so non-git CWDs share a single "global" daemon.
+# cksum is used (not python) to keep this off-the-hot-path cheap.
+if [ -z "${WRIT_REPO_ROOT:-}" ]; then
+    WRIT_REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    [ -z "$WRIT_REPO_ROOT" ] && WRIT_REPO_ROOT="${WRIT_DIR:-${SKILL_DIR:-$PWD}}"
+fi
+if [ -z "${WRIT_PORT:-}" ]; then
+    _writ_port_hash=$(printf '%s' "$WRIT_REPO_ROOT" | cksum | cut -d' ' -f1)
+    WRIT_PORT=$(( 8765 + _writ_port_hash % 1000 ))
+fi
+export WRIT_REPO_ROOT WRIT_PORT
+
 WRIT_SESSION_PORT="${WRIT_PORT:-8765}"
 WRIT_SESSION_HOST="${WRIT_HOST:-localhost}"
 WRIT_SESSION_BASE="http://${WRIT_SESSION_HOST}:${WRIT_SESSION_PORT}"
