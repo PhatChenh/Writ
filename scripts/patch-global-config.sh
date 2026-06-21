@@ -72,7 +72,6 @@ ALLOW=(
     "Bash(bash *writ/scripts/bootstrap-plugin.sh*)"
     "Bash(bash *writ/scripts/ensure-server.sh*)"
     "Bash(bash *writ/scripts/install-harness-config.sh*)"
-    "Bash(bash *writ/scripts/install-user-commands.sh*)"
     "Bash(bash *writ/scripts/stop-server.sh*)"
 )
 

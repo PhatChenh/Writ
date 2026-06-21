@@ -11,8 +11,10 @@ First resolve the per-repo daemon base + current session id (D4-02 "A-auto" give
 each repo its own port; the session id is published every turn by writ-rag-inject):
 
 ```bash
-# Works in-repo and plugin-installed. common.sh derives WRIT_SESSION_BASE (per-repo port).
-source "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/bin/lib/common.sh"
+# Plugin-installed (CLAUDE_PLUGIN_ROOT) or via the install-written plugin-root marker.
+# common.sh derives WRIT_SESSION_BASE (per-repo port, D4-02 "A-auto").
+WR="${CLAUDE_PLUGIN_ROOT:-$(cat "${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/plugin-root" 2>/dev/null)}"
+source "$WR/bin/lib/common.sh"
 SID=$(cat /tmp/writ-current-session)
 ```
 

@@ -122,6 +122,13 @@ fi
 # ── 3. Python venv at ${CLAUDE_PLUGIN_DATA}/.venv ───────────────────────────
 step "Setting up Python virtualenv at $VENV_DIR"
 mkdir -p "$WRIT_DATA"
+
+# Plugin-root marker. Standalone user skills (installed in step 6b, NOT
+# plugin-namespaced) and the slash commands resolve the live plugin bin/
+# without CLAUDE_PLUGIN_ROOT (which is unset outside plugin hook context):
+#   WR="${CLAUDE_PLUGIN_ROOT:-$(cat "$WRIT_DATA/plugin-root")}"
+printf '%s\n' "$WRIT_DIR" > "$WRIT_DATA/plugin-root"
+ok "plugin-root marker written ($WRIT_DATA/plugin-root)"
 if [ ! -d "$VENV_DIR" ]; then
     python3 -m venv "$VENV_DIR"
     ok "created $VENV_DIR"
@@ -169,6 +176,42 @@ if (cd "${WRIT_DIR}" && writ import-markdown 2>&1 | tail -5); then
     ok "rules ingested"
 else
     warn "ingestion reported errors; daemon will serve whatever made it into the graph"
+fi
+
+# ── 6b. Install user skills (version-aware) ─────────────────────────────────
+# Skills live in ${WRIT_DIR}/skills/ as the source of truth. They install as
+# plain (non-namespaced) skills at ~/.claude/skills/<name> so they keep bare
+# names (/grill, not /writ:grill). Per-skill version gate:
+#   not installed        -> install
+#   writ version newer   -> overwrite (upgrade)
+#   same / older / unset -> leave untouched (respects local edits)
+step "Installing user skills (version-aware)"
+SKILLS_SRC="${WRIT_DIR}/skills"
+SKILLS_DEST="${WRIT_SKILLS_DIR:-$HOME/.claude/skills}"
+skill_version() { awk -F': *' '/^version:/{gsub(/["[:space:]]/,"",$2); print $2; exit}' "$1" 2>/dev/null; }
+ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+if [ -d "$SKILLS_SRC" ]; then
+    mkdir -p "$SKILLS_DEST"
+    for sdir in "$SKILLS_SRC"/*/; do
+        [ -f "${sdir}SKILL.md" ] || continue
+        name="$(basename "$sdir")"
+        dest="${SKILLS_DEST}/${name}"
+        srcv="$(skill_version "${sdir}SKILL.md")"
+        if [ ! -f "${dest}/SKILL.md" ]; then
+            mkdir -p "$dest"; cp -R "${sdir}." "$dest/"
+            ok "skill ${name} installed (${srcv:-unversioned})"
+        else
+            destv="$(skill_version "${dest}/SKILL.md")"
+            if ver_gt "${srcv:-0}" "${destv:-0}"; then
+                cp -R "${sdir}." "$dest/"
+                ok "skill ${name} upgraded (${destv:-0} -> ${srcv})"
+            else
+                ok "skill ${name} up-to-date (${destv:-0} >= ${srcv:-0}); left untouched"
+            fi
+        fi
+    done
+else
+    warn "no skills/ dir at $SKILLS_SRC; skipping skill install"
 fi
 
 # ── 7. Start Writ daemon ───────────────────────────────────────────────────

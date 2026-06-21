@@ -53,24 +53,19 @@ Writ-specific blocks are:
 - All entries under `hooks` whose `command` paths point at
   `$HOME/.claude/skills/writ/.claude/hooks/`
 
-## 2. Install user-level slash commands
+## 2. Slash commands and user skills (handled by the plugin + bootstrap)
 
-Claude Code discovers slash commands from `~/.claude/commands/` (user
-level) and `<project>/.claude/commands/` (project level). The Writ
-skill's own `.claude/commands/` directory is only discovered when the
-active session's cwd is the skill itself, so `/writ-approve` etc. will
-not work from your normal project directories without this step.
+Slash commands (`/writ-approve`, `/writ-chat|debug|review|work`) ship
+**with the plugin** from `.claude/commands/` (declared in
+`.claude-plugin/plugin.json`), so installing the plugin makes them
+available in every project — no separate copy step.
 
-```bash
-bash ~/.claude/skills/writ/scripts/install-user-commands.sh
-```
-
-This is idempotent. It copies every `.md` file from
-`~/.claude/skills/writ/templates/commands/` to `~/.claude/commands/`.
-Re-run after pulling skill updates that add or change a command.
-
-After running, restart Claude Code (or open a new session) to pick up
-the new commands.
+User skills (grill, build-pipeline, tdd-implement, …) are installed by
+`scripts/bootstrap-plugin.sh` (step 6b) into `~/.claude/skills/<name>`
+as plain skills, **version-gated**: a skill is installed if missing,
+upgraded only when the in-repo `version:` is newer, and left untouched
+otherwise (your local edits survive). Re-run bootstrap after pulling
+skill updates.
 
 ## Verify install
 
@@ -89,16 +84,17 @@ When the skill is updated (`git pull` or equivalent in
 `~/.claude/skills/writ/`), re-run the install steps:
 
 ```bash
-bash ~/.claude/skills/writ/scripts/install-harness-config.sh
-bash ~/.claude/skills/writ/scripts/install-user-commands.sh
+bash $(claude plugin path writ)/scripts/install-harness-config.sh
+bash $(claude plugin path writ)/scripts/bootstrap-plugin.sh
 ```
 
 `install-harness-config.sh` is destructive (renders the templates wholesale,
-backing up any pre-existing files). `install-user-commands.sh` is idempotent.
-If the update only touched permissions or `templates/CLAUDE.md` (no new
-hooks), `scripts/patch-global-config.sh` is a non-destructive alternative
-that preserves your existing `~/.claude/settings.json` ordering and
-non-Writ entries.
+backing up any pre-existing files). `bootstrap-plugin.sh` is idempotent and
+re-installs user skills version-gated (step 6b). Slash commands ride the
+plugin (no separate copy step). If the update only touched permissions or
+`templates/CLAUDE.md` (no new hooks), `scripts/patch-global-config.sh` is a
+non-destructive alternative that preserves your existing
+`~/.claude/settings.json` ordering and non-Writ entries.
 
 ## 3. Restart the writ daemon (when server.py changes)
 
