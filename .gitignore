@@ -54,6 +54,9 @@ cache/
 plan.md
 capabilities.md
 
+# Git worktrees (linked checkouts, never commit)
+.claude/worktrees/
+
 # Plugin distribution: never ship
 .claude/settings.local.json
 writ.egg-info/
