@@ -17,13 +17,16 @@
 #             3 set but verification mismatch (daemon down?)
 set -euo pipefail
 
-# Server-side VALID_MODES (writ/server.py:38, writ-session.py:835). "prototype"
-# is NOT settable via this path -- it is a separate legacy bypass, not a mode.
+# Server-side VALID_MODES (writ/server.py:38, writ-session.py:835) =
+# conversation|debug|review|work. "chat" is our shorter user-facing alias for
+# conversation -- map it before talking to the server. "prototype" is a
+# separate legacy bypass, not settable here.
 MODE="${1:-}"
+[ "$MODE" = "chat" ] && MODE="conversation"
 case "$MODE" in
     conversation|debug|review|work) ;;
     *)
-        echo "usage: $(basename "$0") <conversation|debug|review|work>" >&2
+        echo "usage: $(basename "$0") <chat|debug|review|work>" >&2
         exit 2
         ;;
 esac
