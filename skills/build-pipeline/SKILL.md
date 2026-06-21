@@ -104,7 +104,7 @@ _From grill interview, <date>_
 [From interview step 4]
 ```
 
-Write to `docs/2. specs/$FEATURE-mini.md`.
+Write to `docs/AI_artifacts/2_specs/$FEATURE-mini.md`.
 
 **2. Write success criteria** to `behavior_inventory.yaml`. Convert interview done-when answers into inventory entries with `origin: design`, `granularity: outcome`. Use the ID prefix from interview step 7. These are design-intent entries — implementation cannot override them (see update-behavior-guide conflict rules).
 
@@ -193,12 +193,12 @@ When a research dispatch returns invalidated assumptions, the orchestrator does 
 
 | Artifact | Folder |
 |----------|--------|
-| draft (input) | `docs/0. draft/` |
-| design doc | `docs/1. design/` |
-| success criteria | `docs/1.5 usability_test/` |
-| spec | `docs/2. specs/` |
-| research doc | `docs/2.5 research/` |
-| plan | `docs/3. plans/` |
+| draft (input) | `docs/AI_artifacts/0_draft/` |
+| design doc | `docs/AI_artifacts/1_design/` |
+| success criteria | `docs/AI_artifacts/1.5_usability_test/` |
+| spec | `docs/AI_artifacts/2_specs/` |
+| research doc | `docs/AI_artifacts/3_research/` |
+| plan | `docs/AI_artifacts/4_plans/` |
 | ADR | `docs/architecture/system_adr/` (system-wide) or the phase's `adr/` folder |
 | STATE.md, CLAUDE.md, CONTEXT.md, OPEN_QUESTIONS.md, CONSTRAINTS.md, TECH_DEBT.md | repo root |
 
@@ -252,7 +252,8 @@ get one-line dismissal with reason.
 
 Write success criteria to behavior_inventory.yaml with origin: design, granularity: outcome.
 Derive the ID prefix by reading existing entries in behavior_inventory.yaml and following the pattern. State the chosen prefix in the design doc header.
-Write the design doc to "docs/1. design/<slug>.md".
+Write the design doc to "docs/AI_artifacts/1_design/<slug>.md".
+The design doc MUST contain these ## sections (enforced by the validate-design-doc gate): ## Summary, ## Constraints, ## Alternatives Considered (name >=2), ## Chosen Approach, ## Risks (each with a mitigation), ## Open Questions. Each section except Open Questions >=50 words; no TODO/TBD/placeholder text.
 Update CONTEXT.md for any new term.
 If the decision is hard-to-reverse + surprising + a real trade-off, write an ADR to docs/architecture/system_adr/.
 Non-coder readable is the default (plain English leads, code in sub-bullets, glossary table).
@@ -280,7 +281,8 @@ entries in behavior_inventory.yaml and state the chosen prefix in the design doc
 
 FULL STRENGTH Step 4 (options) — present every viable option with full treatment.
 
-Write the design doc to "docs/1. design/<slug>.md".
+Write the design doc to "docs/AI_artifacts/1_design/<slug>.md".
+The design doc MUST contain these ## sections (enforced by the validate-design-doc gate): ## Summary, ## Constraints, ## Alternatives Considered (name >=2), ## Chosen Approach, ## Risks (each with a mitigation), ## Open Questions. Each section except Open Questions >=50 words; no TODO/TBD/placeholder text.
 Update CONTEXT.md for any new term.
 Non-coder readable is the default.
 Defer any decision into the doc's "Open questions" — do NOT ask me. Return a ≤1-page summary + any deferred questions.
@@ -291,9 +293,9 @@ Defer any decision into the doc's "Open questions" — do NOT ask me. Return a �
 ```
 NON-INTERACTIVE: true
 Follow the skill at ~/.claude/skills/writing-detailed-specs/SKILL.md.
-Inputs: design doc at "docs/1. design/<slug>.md"; repo root <abs path> (read CLAUDE.md + referenced files).
+Inputs: design doc at "docs/AI_artifacts/1_design/<slug>.md"; repo root <abs path> (read CLAUDE.md + referenced files).
 
-Write the spec to "docs/2. specs/<slug>.md". Non-coder readable is the default.
+Write the spec to "docs/AI_artifacts/2_specs/<slug>.md". Non-coder readable is the default.
 Defer questions into the spec; do NOT ask me. Return a ≤1-page summary + deferred questions.
 ```
 
@@ -302,11 +304,11 @@ Defer questions into the spec; do NOT ask me. Return a ≤1-page summary + defer
 ```
 NON-INTERACTIVE: true
 Follow the skill at ~/.claude/skills/research/SKILL.md.
-Verify the spec at "docs/2. specs/<slug>.md" against the ACTUAL code in repo root <abs path>.
+Verify the spec at "docs/AI_artifacts/2_specs/<slug>.md" against the ACTUAL code in repo root <abs path>.
 Do NOT trust the spec's claims, line numbers, or any "pre-validated" label — open the real files and confirm
 each assumption at the depth its claim requires (behavior claims need behavior reading, not a signature grep).
 
-Write findings to "docs/2.5 research/<slug>.md", including the Spec Verification table
+Write findings to "docs/AI_artifacts/3_research/<slug>.md", including the Spec Verification table
 and Invalidated Assumptions section if any assumption is false. Non-coder readable.
 Return a ≤1-page summary stating counts: validated / invalidated / unverifiable, and list any invalidated IDs.
 ```
@@ -317,7 +319,7 @@ Return a ≤1-page summary stating counts: validated / invalidated / unverifiabl
 NON-INTERACTIVE: true
 Follow the skill at ~/.claude/skills/plan-from-specs/SKILL.md.
 Mode: standard.
-Inputs: spec "docs/2. specs/<slug>.md" + research "docs/2.5 research/<slug>.md" + repo root <abs path>.
+Inputs: spec "docs/AI_artifacts/2_specs/<slug>.md" + research "docs/AI_artifacts/3_research/<slug>.md" + repo root <abs path>.
 FIRST check the research doc's "Invalidated Assumptions" — if non-empty, STOP and report; do not write a plan.
 
 Reference spec component IDs; do NOT restate the spec.
@@ -326,7 +328,7 @@ Write the COMPLETE plan file in ONE Write call: architecture section + approach 
 + open questions + out of scope. The file must contain every section from the Step 4 template.
 A file with only the Architecture section is INCOMPLETE — you are not done.
 
-Write the plan to "docs/3. plans/<slug>.md". Non-coder readable is the default.
+Write the plan to "docs/AI_artifacts/4_plans/<slug>.md". Non-coder readable is the default.
 Do NOT run plan-from-specs Step 6 (the mid-session STATE.md write) — the orchestrator updates STATE.md once at pipeline end.
 Return a ≤1-page summary + any open questions.
 ```
@@ -337,7 +339,7 @@ Return a ≤1-page summary + any open questions.
 NON-INTERACTIVE: true
 Follow the skill at ~/.claude/skills/plan-from-specs/SKILL.md.
 Mode: tiny.
-Inputs: mini-spec "docs/2. specs/<slug>-mini.md" + repo root <abs path>. No research doc — you read code directly.
+Inputs: mini-spec "docs/AI_artifacts/2_specs/<slug>-mini.md" + repo root <abs path>. No research doc — you read code directly.
 
 TIER ESCALATION: If during code reading you discover complexity beyond tiny
 scope (touches 3+ modules, crosses public API boundary, hits CONSTRAINTS.md constraint,
@@ -347,7 +349,7 @@ re-running as medium." Do NOT produce a plan over hidden complexity.
 Write the COMPLETE plan file in ONE Write call: architecture + approach + ALL phases +
 open questions + out of scope. A file with only the Architecture section is INCOMPLETE.
 
-Write the plan to "docs/3. plans/<slug>.md". Non-coder readable is the default.
+Write the plan to "docs/AI_artifacts/4_plans/<slug>.md". Non-coder readable is the default.
 Do NOT run plan-from-specs Step 6.
 Return a ≤1-page summary + any open questions + tier escalation if triggered.
 ```

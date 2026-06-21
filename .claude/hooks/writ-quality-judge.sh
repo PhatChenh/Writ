@@ -21,13 +21,20 @@ is_work_mode "$SESSION_ID" || exit 0
 FILE=$(parsed_field "$PARSED" "file_path")
 [ -z "$FILE" ] && exit 0
 
-# Classify artifact type.
+# Classify artifact type. Plan/design paths are config-driven
+# (bin/lib/artifact_paths.py + optional .claude/writ.json); tests are matched
+# by the standard tests/ layout.
 ARTIFACT_TYPE=""
-case "$FILE" in
-    */docs/*/plans/*.md|*/docs/plans/*.md|*/plan.md) ARTIFACT_TYPE="plan" ;;
-    */docs/*/specs/*-design.md|*/docs/specs/*-design.md) ARTIFACT_TYPE="design" ;;
-    */tests/*.py|*/tests/*.js|*/tests/*.ts|*/tests/*.php|*/tests/*.go|*/tests/*.rs|*/tests/*.java) ARTIFACT_TYPE="test" ;;
-    *) exit 0 ;;
+ART=$(python3 "$WRIT_DIR/bin/lib/artifact_paths.py" classify "$FILE" 2>/dev/null)
+case "$ART" in
+    plan) ARTIFACT_TYPE="plan" ;;
+    design) ARTIFACT_TYPE="design" ;;
+    *)
+        case "$FILE" in
+            */tests/*.py|*/tests/*.js|*/tests/*.ts|*/tests/*.php|*/tests/*.go|*/tests/*.rs|*/tests/*.java) ARTIFACT_TYPE="test" ;;
+            *) exit 0 ;;
+        esac
+        ;;
 esac
 
 # Emit the self-review directive. Claude reads this on next turn.
@@ -47,7 +54,7 @@ Rubric (plan Section 15.4):
   Overall score = the LOWEST scoring section. Score ≥ 3 is required.
 
 Post the judgment:
-  curl -sX POST http://localhost:8765/session/$SESSION_ID/quality-judgment \\
+  curl -sX POST ${WRIT_SESSION_BASE}/session/$SESSION_ID/quality-judgment \\
     -H 'Content-Type: application/json' \\
     -d '{"artifact_path": "$FILE", "score": <0-5>, "failing_section": "<name or null>", "rationale": "<one sentence>"}'
 
@@ -71,7 +78,7 @@ Rubric (plan Section 15.5):
 Overall score = the lowest across the three areas. Score ≥ 3 required.
 
 Post the judgment:
-  curl -sX POST http://localhost:8765/session/$SESSION_ID/quality-judgment \\
+  curl -sX POST ${WRIT_SESSION_BASE}/session/$SESSION_ID/quality-judgment \\
     -H 'Content-Type: application/json' \\
     -d '{"artifact_path": "$FILE", "score": <0-5>, "failing_section": "<name or null>", "rationale": "<one sentence>"}'
 EOF
@@ -89,7 +96,7 @@ Rubric (plan Section 15.6):
 Score ≥ 3 required.
 
 Post the judgment:
-  curl -sX POST http://localhost:8765/session/$SESSION_ID/quality-judgment \\
+  curl -sX POST ${WRIT_SESSION_BASE}/session/$SESSION_ID/quality-judgment \\
     -H 'Content-Type: application/json' \\
     -d '{"artifact_path": "$FILE", "score": <0-5>, "failing_section": "<which anti-pattern or null>", "rationale": "<one sentence>"}'
 EOF

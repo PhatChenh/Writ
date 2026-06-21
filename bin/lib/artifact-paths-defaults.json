@@ -1,0 +1,10 @@
+{
+  "extends_defaults": true,
+  "artifacts": {
+    "design":   ["docs/AI_artifacts/1_design/*.md"],
+    "spec":     ["docs/AI_artifacts/2_specs/*.md"],
+    "research": ["docs/AI_artifacts/3_research/*.md"],
+    "plan":     ["docs/AI_artifacts/4_plans/*.md"],
+    "handoff":  [".claude/handoffs/*.md"]
+  }
+}

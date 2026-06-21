@@ -17,10 +17,11 @@ SESSION_ID=$(detect_session_id "$PARSED")
 is_work_mode "$SESSION_ID" || exit 0
 
 FILE=$(parsed_field "$PARSED" "file_path")
-case "$FILE" in
-    */docs/*/specs/*-design.md|*/docs/specs/*-design.md) ;;
-    *) exit 0 ;;
-esac
+[ -z "$FILE" ] && exit 0
+# Path knowledge is config-driven (bin/lib/artifact_paths.py + optional
+# .claude/writ.json). Default design dir = docs/AI_artifacts/1_design/.
+ART=$(python3 "$WRIT_DIR/bin/lib/artifact_paths.py" classify "$FILE" 2>/dev/null)
+[ "$ART" = "design" ] || exit 0
 
 CONTENT=$(echo "$PARSED" | python3 -c "import sys,json; print((json.load(sys.stdin).get('tool_input') or {}).get('content',''))")
 [ -z "$CONTENT" ] && exit 0
@@ -28,7 +29,9 @@ CONTENT=$(echo "$PARSED" | python3 -c "import sys,json; print((json.load(sys.std
 DENY=$(python3 <<'PY'
 import re, sys
 content = sys.argv[1]
-REQUIRED = ["## Goal", "## Constraints", "## Alternatives Considered", "## Chosen Approach", "## Risks"]
+REQUIRED = ["## Summary", "## Constraints", "## Alternatives Considered", "## Chosen Approach", "## Risks", "## Open Questions"]
+# Open Questions may legitimately be short (e.g. "None") -> presence-only, no floor.
+FLOOR = ["## Summary", "## Constraints", "## Alternatives Considered", "## Chosen Approach", "## Risks"]
 BLOCKLIST = ["TODO", "TBD", "fill in", "appropriate", "similar to above", "as needed", "placeholder", "<describe>", "<your text>"]
 errors = []
 for section in REQUIRED:
@@ -43,7 +46,7 @@ for i, m in enumerate(matches):
     start = m.end()
     end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
     sections[name] = content[start:end]
-for section in REQUIRED:
+for section in FLOOR:
     text = sections.get(section, "")
     # Strip code fences for fair word-count.
     cleaned = re.sub(r"```[\s\S]*?```", "", text)

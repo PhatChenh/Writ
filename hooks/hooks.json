@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-start-bootstrap.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/.claude/hooks/writ-scaffold-config.sh"
           }
         ]
       }

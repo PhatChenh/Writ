@@ -1,0 +1,14 @@
+{
+  "extends_defaults": true,
+  "patterns": [
+    {
+      "name": "writ-python",
+      "src_match": ["*/writ/*.py", "writ/*.py"],
+      "test_match": ["*/tests/test_*.py", "tests/test_*.py"],
+      "src_to_test_regex": "^.*/writ/(?:.*/)?([^/]+)\\.py$",
+      "src_to_test_replace": "tests/test_{1}.py",
+      "runner_command": "python -m pytest",
+      "runner_config_file": "pyproject.toml"
+    }
+  ]
+}
