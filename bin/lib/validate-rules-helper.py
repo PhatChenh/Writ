@@ -101,6 +101,8 @@ def _find_plan_md(project_root: str) -> str:
     candidates += glob.glob(os.path.join(project_root, "src/*/plan.md"))
     candidates += glob.glob(os.path.join(project_root, "bin/plan.md"))
     candidates += glob.glob(os.path.join(project_root, "*/plan.md"))
+    # Our build-pipeline plans (standardized convention, D4 #3/#4).
+    candidates += glob.glob(os.path.join(project_root, "docs/AI_artifacts/4_plans/*.md"))
     found = [c for c in candidates if os.path.isfile(c)]
     if not found:
         return ""

@@ -125,12 +125,19 @@ Before writing any code or test, call `AskUserQuestion`:
   - <behavior 2>
 ```
 
-Options:
-- A) Proceed with implementation (Recommended)
-- B) Adjust scope before starting — describe adjustment
-- C) Skip this phase
+Then **wait for approval** — do not write code yet.
 
-Do not write code until human selects A.
+**Writ layering (in a Writ Work-mode repo):** approval is mechanical. The user runs
+`/writ-approve` and Writ unblocks code writes; Writ blocks ALL writes until the plan
+and test skeletons are approved. Do NOT also run a separate approval `AskUserQuestion`
+here — that double-gates. If the user wants to adjust scope or skip the phase, they
+will say so; handle it before proceeding. Outside a Writ repo, wait for the user's
+explicit go-ahead.
+
+Division of labor: **Writ enforces** (mechanically blocks writes pre-approval);
+**this skill guides** (one phase at a time, present before implementing). Writ's two
+gates (plan, test-skeletons) unlock once — the per-phase cadence below is skill
+discipline, not a Writ gate.
 
 If test criteria in the plan are ambiguous — where two reasonable implementations would both satisfy them — surface the ambiguity here via additional `AskUserQuestion`. Do not silently pick an interpretation.
 

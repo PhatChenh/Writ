@@ -130,7 +130,7 @@ digraph loop {
    - A reminder: "Context window note: all artifacts are on disk. If your session context is running low, this is a safe breakpoint to continue in a fresh chat."
    - Ask: "Ready to proceed to [next phase], or would you like to pause here?"
    Wait for explicit user confirmation before dispatching the next subagent. This is a hard gate — do not auto-proceed.
-   - **Writ mode (silent; no-op outside a Writ repo):** if the next phase is `plan`, arm Writ Work mode first so plan.md feeds Writ's plan→test→code gate machine for downstream implementation:
+   - **Writ mode (silent; no-op outside a Writ repo):** if the next phase is `plan`, arm Writ Work mode first so downstream implementation runs under Writ's plan→test→code gate machine. (That machine gates *code writes* on human approval via `/writ-approve`; it does NOT read a file named plan.md — our plan lives at `docs/AI_artifacts/4_plans/<slug>.md` and must carry the `## Files`/`## Rules Applied`/`## Capabilities` gate sections.):
      ```bash
      WR="${CLAUDE_PLUGIN_ROOT:-$(cat "${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/plugin-root" 2>/dev/null)}"; [ -x "$WR/bin/writ-mode-set.sh" ] && bash "$WR/bin/writ-mode-set.sh" work 2>/dev/null || true
      ```
@@ -324,9 +324,10 @@ FIRST check the research doc's "Invalidated Assumptions" — if non-empty, STOP 
 
 Reference spec component IDs; do NOT restate the spec.
 
-Write the COMPLETE plan file in ONE Write call: architecture section + approach + ALL phases
-+ open questions + out of scope. The file must contain every section from the Step 4 template.
-A file with only the Architecture section is INCOMPLETE — you are not done.
+Write the COMPLETE plan file in ONE Write call using plan-from-specs' Step 4 template: ## Analysis,
+## Files, ## Rules Applied, ## Capabilities (unchecked `- [ ]`), ## Phases, ## Open Questions,
+## Out of Scope. The ## Files / ## Rules Applied / ## Capabilities sections are REQUIRED by Writ's
+plan-gate (_validate_phase_a) — omitting them blocks the downstream work gate. A partial file is INCOMPLETE.
 
 Write the plan to "docs/AI_artifacts/4_plans/<slug>.md". Non-coder readable is the default.
 Do NOT run plan-from-specs Step 6 (the mid-session STATE.md write) — the orchestrator updates STATE.md once at pipeline end.
@@ -346,8 +347,9 @@ scope (touches 3+ modules, crosses public API boundary, hits CONSTRAINTS.md cons
 4+ integration points), HARD STOP. Report: "Classified as tiny but found [complexity]. Recommend
 re-running as medium." Do NOT produce a plan over hidden complexity.
 
-Write the COMPLETE plan file in ONE Write call: architecture + approach + ALL phases +
-open questions + out of scope. A file with only the Architecture section is INCOMPLETE.
+Write the COMPLETE plan file in ONE Write call using plan-from-specs' Step 4 template: ## Analysis,
+## Files, ## Rules Applied, ## Capabilities (unchecked `- [ ]`), ## Phases, ## Open Questions,
+## Out of Scope. The ## Files / ## Rules Applied / ## Capabilities sections are REQUIRED by Writ's plan-gate. A partial file is INCOMPLETE.
 
 Write the plan to "docs/AI_artifacts/4_plans/<slug>.md". Non-coder readable is the default.
 Do NOT run plan-from-specs Step 6.
