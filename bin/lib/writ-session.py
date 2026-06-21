@@ -203,6 +203,19 @@ def cmd_update(session_id: str, args: list[str]) -> None:
                 j += 1
             cache["gates_approved"] = sorted(set(gates))
             i = j
+        elif args[i] == "--set-plan-reviewed" and i + 1 < len(args):
+            # Record plan-compliance review completion for a task so the
+            # writ-sdd-review-order gate allows the code-quality reviewer to
+            # dispatch next (ENF-PROC-SDD-001). The orchestrator skill calls
+            # this after writ-plan-reviewer passes. task_id groups the
+            # two-stage review (defaults to "default" / active phase in the gate).
+            task_id = args[i + 1]
+            ros = cache.get("review_ordering_state") or {}
+            entry = ros.get(task_id) or {}
+            entry["plan_reviewer_completed"] = True
+            ros[task_id] = entry
+            cache["review_ordering_state"] = ros
+            i += 2
         elif args[i] == "--inc-queries":
             cache["queries"] = cache.get("queries", 0) + 1
             i += 1

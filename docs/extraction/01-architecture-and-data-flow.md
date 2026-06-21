@@ -225,8 +225,8 @@ From `.claude/agents/writ-*.md`:
 | `writ-planner` | opus | Read, Glob, Grep, Write | Designs implementation plans. Writes `plan.md` and `capabilities.md` to project root. | Phase 2; consumes explorer output. |
 | `writ-test-writer` | sonnet | Read, Glob, Grep, Write, Bash | Writes test skeleton files with method signatures, mock setup, specific assertions. | Phase 3, after plan approval. |
 | `writ-implementer` | opus | Read, Glob, Grep, Write, Edit, Bash | Writes all production code per plan, ordered: registration/config → API/DTO → model → business logic → frontend/admin. Updates `capabilities.md`. | Phase 4, after test-skeleton approval. |
-| `writ-spec-reviewer` | haiku | Read, Glob, Grep, Bash | Reviews diff for spec compliance only. Strict JSON output. Runs *before* code-quality review (the SDD review-order rule enforces this via `writ-sdd-review-order.sh`). | First reviewer. |
-| `writ-code-quality-reviewer` | sonnet | Read, Glob, Grep, Bash | Reviews diff for correctness, safety, readability, project conventions, rule violations. Severity: Critical (block merge), Important (should fix), Minor (nit). | Second reviewer, after spec-compliance passes. |
+| `writ-plan-reviewer` | haiku | Read, Glob, Grep, Bash | Reviews diff for plan compliance only. Strict JSON output. Runs *before* code-quality review (the SDD review-order rule enforces this via `writ-sdd-review-order.sh`). | First reviewer. |
+| `writ-code-quality-reviewer` | sonnet | Read, Glob, Grep, Bash | Reviews diff for correctness, safety, readability, project conventions, rule violations. Severity: Critical (block merge), Important (should fix), Minor (nit). | Second reviewer, after plan-compliance passes. |
 
 The orchestrator dispatches workers in foreground sequentially. Workers bypass mode/gate checks entirely; they do not set a mode.
 
@@ -275,7 +275,7 @@ Several entries from the original draft have been resolved by code changes; surv
 - `SCALE_BENCHMARK_RESULTS.md`, the architecture handbook (now `HANDBOOK.md`, originally ~934 lines as `RAG_arch_handbook.md`), `README.md`, `SKILL.md`, `CONTRIBUTING.md`
 - `docs/install-writ.md` and the now-deleted planning artifacts (`evolution-reference.md`, `integration.md`, `mandatory-rule-audit.md`, `phase-0-report.md`, `phase-0-schema-proposal.md`, `phase-2-self-review-decision.md`, `phase-6-plan.md`, `plan-format.md`)
 - `docs/monthly-reviews/2026-05.md`, `TEMPLATE.md`
-- `.claude/agents/writ-{explorer,planner,test-writer,implementer,spec-reviewer,code-quality-reviewer}.md`
+- `.claude/agents/writ-{explorer,planner,test-writer,implementer,plan-reviewer,code-quality-reviewer}.md`
 
 Spot-check: `writ/frequency.py` (plain ratio, no Wilson CI).
 

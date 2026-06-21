@@ -26,7 +26,7 @@ class TestSubagentAgentsPresent:
 
     REQUIRED = [
         "writ-explorer", "writ-planner", "writ-test-writer",
-        "writ-implementer", "writ-spec-reviewer", "writ-code-quality-reviewer",
+        "writ-implementer", "writ-plan-reviewer", "writ-code-quality-reviewer",
     ]
 
     @pytest.mark.parametrize("name", REQUIRED)
@@ -88,7 +88,7 @@ class TestRolePromptCLI:
 
     @pytest.mark.parametrize("role", [
         "writ-explorer", "writ-planner", "writ-test-writer",
-        "writ-implementer", "writ-spec-reviewer", "writ-code-quality-reviewer",
+        "writ-implementer", "writ-plan-reviewer", "writ-code-quality-reviewer",
     ])
     def test_role_prompt_returns_text(self, role: str) -> None:
         result = subprocess.run(

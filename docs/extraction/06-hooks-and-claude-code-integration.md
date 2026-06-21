@@ -147,7 +147,7 @@ Structure:
 **Mode-gated**: only fires in `review` or `debug` modes. Same shape as pretool-rag (path-based query, /query call, format, cache update). `query_source: "file-read"`.
 
 ### `writ-sdd-review-order.sh` — PreToolUse Task (71 lines)
-Bails unless work mode. Acts only when `tool_input.subagent_type` contains "code-review" or equals "writ-code-reviewer". Reads `cache.review_ordering_state[task_id]`. If `spec_reviewer_completed != true` → deny with `ENF-PROC-SDD-001`.
+Bails unless work mode. Acts only when `tool_input.subagent_type` contains "code-quality" or "code-review". Reads `cache.review_ordering_state[task_id]`. If `plan_reviewer_completed != true` → deny with `ENF-PROC-SDD-001` (record completion via `writ-session.py update <sid> --set-plan-reviewed <task>`).
 
 ### `writ-session-end.sh` — SessionEnd (98 lines)
 PPID-derived session_id. Sequence: (1) `auto-feedback`, (2) `coverage`, (3) gate metrics: appends `## Gate: NAME -- TIMESTAMP` to `${PROJECT_ROOT}/.claude/session-metrics.md`, (4) emits `session_end` rollup with `rules_loaded, total_violations, files_written, queries, mode, final_phase`.

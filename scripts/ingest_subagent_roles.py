@@ -30,14 +30,14 @@ AGENTS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "agents"
 FRONT_MATTER = re.compile(r"^---\n(.*?)\n---\n(.*)", re.DOTALL)
 
 # Dispatched-by map: which Playbooks invoke each role. Per plan Section 8
-# Subagent-Driven Development (PBK-PROC-SDD-001) dispatches spec-reviewer
+# Subagent-Driven Development (PBK-PROC-SDD-001) dispatches plan-reviewer
 # and code-reviewer; writ-implementer is also dispatched by SDD.
 DISPATCHED_BY: dict[str, list[str]] = {
     "writ-explorer":              [],
     "writ-planner":               [],
     "writ-test-writer":           [],
     "writ-implementer":           ["PBK-PROC-SDD-001"],
-    "writ-spec-reviewer":         ["PBK-PROC-SDD-001"],
+    "writ-plan-reviewer":         ["PBK-PROC-SDD-001"],
     "writ-code-quality-reviewer": ["PBK-PROC-SDD-001", "PBK-PROC-REVREQ-001"],
 }
 

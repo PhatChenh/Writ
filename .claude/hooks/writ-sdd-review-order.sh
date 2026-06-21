@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Phase 2: enforce spec-review-before-code-quality-review (ENF-PROC-SDD-001).
+# Phase 2: enforce plan-review-before-code-quality-review (ENF-PROC-SDD-001).
 #
-# PreToolUse on Task when the dispatched subagent is a code reviewer.
-# Denies dispatch if spec-reviewer for the current task hasn't completed.
-# Feature-flag gated.
+# PreToolUse on Task when the dispatched subagent is a code-quality reviewer.
+# Denies dispatch if writ-plan-reviewer for the current task hasn't completed
+# (recorded via `writ-session.py update <sid> --set-plan-reviewed <task>`).
+# Work-mode gated. ("spec"->"plan" rename: our implementer's contract doc is
+# the plan at docs/AI_artifacts/4_plans/, not a separate spec. #5 review flow.)
 set -euo pipefail
 
 # Phase 4c: capture stderr (Python tracebacks etc.) to debug log so
@@ -44,14 +46,17 @@ except (json.JSONDecodeError, ValueError) as _e:
     sys.exit(0)
 ti = parsed.get("tool_input") or {}
 agent_type = (ti.get("subagent_type") or "").lower()
-if "code-review" not in agent_type and agent_type != "writ-code-reviewer":
+# Match our code-quality reviewer (writ-code-quality-reviewer) plus any generic
+# code-review subagent. Note "code-review" does NOT substring-match
+# "code-quality-reviewer", so both tokens are checked.
+if "code-quality" not in agent_type and "code-review" not in agent_type:
     sys.exit(0)
 session = mod._read_cache("$SESSION_ID")
 state = session.get("review_ordering_state") or {}
 # Default task key if not specified: use the current active task id or 'default'
 task_id = ti.get("task_id") or session.get("active_phase") or "default"
-if not state.get(task_id, {}).get("spec_reviewer_completed", False):
-    print(f"ENF-PROC-SDD-001: code-quality review dispatched before spec-compliance review completed for task '{task_id}'. Run writ-spec-reviewer first, record its completion via /session/{{sid}}/review-ordering, then dispatch writ-code-reviewer.")
+if not state.get(task_id, {}).get("plan_reviewer_completed", False):
+    print(f"ENF-PROC-SDD-001: code-quality review dispatched before plan-compliance review completed for task '{task_id}'. Dispatch writ-plan-reviewer first, then record it: bin/lib/writ-session.py update <sid> --set-plan-reviewed '{task_id}'. Then dispatch writ-code-quality-reviewer.")
 PY
 )
 
