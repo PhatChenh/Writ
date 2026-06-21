@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 # Phase 2: Gate 5 Tier 1 design-doc quality gate (plan Section 15.3).
 #
-# PreToolUse on Write matching docs/**/specs/*-design.md.
+# PreToolUse on Write to a design-doc artifact (path classified by
+# bin/lib/artifact_paths.py; default docs/AI_artifacts/1_design/).
 # Denies if the design doc is missing any required subsection, any subsection
 # is under the word-count floor, or blocklist placeholders are present.
-# Override: --skip-quality-check flag logged to friction log.
-# Feature-flag gated.
+#
+# D4-03 #4 (decoupled from Work mode, 2026-06-21): this is a pure
+# path+content format validator with no teeth on code, so it fires in ANY
+# mode (conversation/debug/review/work) whenever a Writ session is active.
+# Rationale: build-pipeline writes design docs via a SUBAGENT in the design
+# step, which runs BEFORE Work mode is armed (Work is armed only at the plan
+# transition). Gating this on Work mode meant pipeline design docs were never
+# validated. Decoupling (vs arming Work at the design step) keeps the rest of
+# the Work-mode blocker suite off during design/spec. The session guard below
+# keeps it quiet in Writ-less contexts. See WRIT-LOCAL-ADAPTATION.md #4.
 set -euo pipefail
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 WRIT_DIR="$(cd "$HOOK_DIR/../.." && pwd)"
@@ -14,7 +23,6 @@ source "$WRIT_DIR/bin/lib/common.sh"
 PARSED=$(parse_hook_stdin)
 SESSION_ID=$(detect_session_id "$PARSED")
 [ -z "$SESSION_ID" ] && exit 0
-is_work_mode "$SESSION_ID" || exit 0
 
 FILE=$(parsed_field "$PARSED" "file_path")
 [ -z "$FILE" ] && exit 0
@@ -26,9 +34,9 @@ ART=$(python3 "$WRIT_DIR/bin/lib/artifact_paths.py" classify "$FILE" 2>/dev/null
 CONTENT=$(echo "$PARSED" | python3 -c "import sys,json; print((json.load(sys.stdin).get('tool_input') or {}).get('content',''))")
 [ -z "$CONTENT" ] && exit 0
 
-DENY=$(python3 <<'PY'
-import re, sys
-content = sys.argv[1]
+DENY=$(DD_CONTENT="$CONTENT" python3 <<'PY'
+import re, os
+content = os.environ["DD_CONTENT"]
 REQUIRED = ["## Summary", "## Constraints", "## Alternatives Considered", "## Chosen Approach", "## Risks", "## Open Questions"]
 # Open Questions may legitimately be short (e.g. "None") -> presence-only, no floor.
 FLOOR = ["## Summary", "## Constraints", "## Alternatives Considered", "## Chosen Approach", "## Risks"]
@@ -69,7 +77,7 @@ if "mitigation" not in risks.lower():
 if errors:
     print("Gate 5 Tier 1 (validate-design-doc): " + "; ".join(errors))
 PY
-"$CONTENT")
+)
 
 if [ -n "$DENY" ]; then
     python3 -c "

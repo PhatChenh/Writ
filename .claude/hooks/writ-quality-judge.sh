@@ -18,6 +18,25 @@ SESSION_ID=$(detect_session_id "$PARSED")
 [ -z "$SESSION_ID" ] && exit 0
 is_work_mode "$SESSION_ID" || exit 0
 
+# Subagent gate (D4-03 #4, 2026-06-21): this hook's self-review model is a
+# NEXT-TURN directive -- the writer is told to score the artifact and POST on
+# its following turn. A dispatched subagent writes its artifact, returns a
+# summary, and TERMINATES, so it has no next turn to act on the directive (and
+# would POST to its isolated session, which the parent's verify-before-claim
+# never reads). Injecting the directive into a worker is therefore dead noise.
+# No-op for subagents; quality for subagent-written artifacts is enforced in
+# the dispatch-prompt / reviewer-agent layer (#5 review flow), not here.
+# Mirrors writ-context-watcher.sh's subagent gate.
+IS_SUBAGENT=$(_writ_session read "$SESSION_ID" 2>/dev/null | python3 -c "
+import sys, json
+try:
+    cache = json.load(sys.stdin)
+except Exception:
+    cache = {}
+print('true' if cache.get('is_subagent') else 'false')
+" 2>/dev/null || echo "false")
+[ "$IS_SUBAGENT" = "true" ] && exit 0
+
 FILE=$(parsed_field "$PARSED" "file_path")
 [ -z "$FILE" ] && exit 0
 

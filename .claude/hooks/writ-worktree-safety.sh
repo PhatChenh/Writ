@@ -20,9 +20,9 @@ case "$CMD" in
     *) exit 0 ;;
 esac
 
-DENY=$(python3 <<'PY'
+DENY=$(WT_CMD="$CMD" python3 <<'PY'
 import os, re, sys
-cmd = sys.argv[1]
+cmd = os.environ["WT_CMD"]
 # Extract the path argument. `git worktree add [opts] <path> [branch]`
 m = re.search(r'git\s+worktree\s+add\s+((?:--?\S+\s+)*)(\S+)', cmd)
 if not m:
@@ -51,7 +51,7 @@ matched = any(
 if not matched:
     print(f"ENF-PROC-WORKTREE-001: project-local worktree target '{rel}' is not matched by any .gitignore entry. Add '{top}/' to .gitignore before creating the worktree.")
 PY
-"$CMD")
+)
 
 if [ -n "$DENY" ]; then
     python3 -c "
