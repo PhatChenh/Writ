@@ -7,12 +7,21 @@ You have been invoked to advance the Writ workflow phase. Confirm the user's int
 
 ## Procedure
 
-1. Check the current phase via `GET /session/$SESSION_ID/current-phase`.
+First resolve the per-repo daemon base + current session id (D4-02 "A-auto" gives
+each repo its own port; the session id is published every turn by writ-rag-inject):
+
+```bash
+# Works in-repo and plugin-installed. common.sh derives WRIT_SESSION_BASE (per-repo port).
+source "${CLAUDE_PLUGIN_ROOT:-$(git rev-parse --show-toplevel)}/bin/lib/common.sh"
+SID=$(cat /tmp/writ-current-session)
+```
+
+1. Check the current phase via `GET "${WRIT_SESSION_BASE}/session/$SID/current-phase"`.
 2. If the current phase artifact exists and was presented to the user in this or a prior turn (plan.md for planning, test skeletons for testing, etc.), proceed. Otherwise, respond: "No current phase artifact to approve. Present the artifact first."
 3. Advance via POST with explicit tool source:
 
 ```bash
-curl -sX POST http://localhost:8765/session/$SESSION_ID/advance-phase \
+curl -sX POST "${WRIT_SESSION_BASE}/session/$SID/advance-phase" \
   -H 'Content-Type: application/json' \
   -d '{"confirmation_source": "tool"}'
 ```
