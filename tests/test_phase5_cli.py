@@ -7,9 +7,16 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+
+# Synthetic friction events are filtered by analyzers against datetime.now(),
+# so a hardcoded date silently drifts out of every since_days window. Anchor the
+# seeded events one day back; the literal "2026-04-30" date in the fixtures is
+# rewritten to this at write time.
+_RECENT_DAY = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
 
 WRIT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -42,7 +49,7 @@ def synthetic_log(tmp_path: Path) -> Path:
         '{"ts":"2026-04-30T12:00:04Z","session":"s1","mode":"work","event":"playbook_step_complete","playbook_id":"PBK-A","step_id":"s2","step_index":1,"total_steps":2}',
         '{"ts":"2026-04-30T12:00:05Z","session":"s1","mode":"work","event":"quality_judgment","judgment_id":"j1","rubric":"R1","decision":"fail","override":true,"latency_ms":120}',
     ]
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text(("\n".join(lines) + "\n").replace("2026-04-30", _RECENT_DAY))
     return p
 
 

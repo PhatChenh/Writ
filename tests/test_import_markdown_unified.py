@@ -67,8 +67,27 @@ def _cypher(query: str) -> int:
     pytest.skip(f"Cypher query returned no rows: {query!r}")
 
 
+def _close_prod_db() -> None:
+    """Release the cached prod-graph connection (and its lockfile) so a
+    `writ import-markdown` subprocess can acquire the same single-writer lock.
+
+    SKILL_DIR (~/.claude/skills/writ) and the repo share one .writ/graph.lock
+    (SKILL_DIR is the install/symlink), so a held connection would otherwise
+    deadlock the subprocess with "graph DB is locked". The next _get_prod_db()
+    re-opens lazily after the subprocess has exited and released its own lock.
+    """
+    global _prod_db
+    if _prod_db is not None:
+        try:
+            asyncio.run(_prod_db.close())
+        except Exception:
+            pass
+        _prod_db = None
+
+
 def _run_import(*args: str, cwd: Path = SKILL_DIR) -> subprocess.CompletedProcess:
     """Run `writ import-markdown` with the given args and return the completed process."""
+    _close_prod_db()  # release the lock so the subprocess can take it
     return subprocess.run(
         [*_WRIT_CMD_PREFIX, "import-markdown", *args],
         cwd=str(cwd),

@@ -35,7 +35,12 @@ def _ev(event: str, ts: datetime, **fields) -> FrictionEvent:
 
 @pytest.fixture
 def now() -> datetime:
-    return datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+    # Relative to the current time, not a hardcoded date: analyze_* filters
+    # events by `since_days` against datetime.now(), so a fixed past date
+    # silently drifts out of the window and every analyzer returns []. Anchor
+    # one day back so the +minutes/+hours offsets in tests stay inside any
+    # reasonable since_days window.
+    return datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=1)
 
 
 class TestRuleEffectiveness:

@@ -6,12 +6,18 @@ gracefully when the friction log is empty.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from writ.server import app
+
+# Analyzers filter friction events against datetime.now(); a hardcoded date
+# drifts out of the window over time. Rewrite the seeded "2026-04-30" date to
+# one day back so the dashboard sees the events.
+_RECENT_DAY = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 @pytest.fixture
@@ -31,9 +37,11 @@ def empty_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def synthetic_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     p = tmp_path / "synth.log"
     p.write_text(
-        '{"ts":"2026-04-30T12:00:00Z","session":"s1","mode":"work","event":"rag_query","rule_id":"ENF-X"}\n'
-        '{"ts":"2026-04-30T12:00:01Z","session":"s1","mode":"work","event":"gate_denial","rule_id":"ENF-X","gate":"phase-a"}\n'
-        '{"ts":"2026-04-30T12:00:05Z","session":"s1","mode":"work","event":"quality_judgment","judgment_id":"j1","rubric":"R1","decision":"fail","override":true,"latency_ms":120}\n'
+        (
+            '{"ts":"2026-04-30T12:00:00Z","session":"s1","mode":"work","event":"rag_query","rule_id":"ENF-X"}\n'
+            '{"ts":"2026-04-30T12:00:01Z","session":"s1","mode":"work","event":"gate_denial","rule_id":"ENF-X","gate":"phase-a"}\n'
+            '{"ts":"2026-04-30T12:00:05Z","session":"s1","mode":"work","event":"quality_judgment","judgment_id":"j1","rubric":"R1","decision":"fail","override":true,"latency_ms":120}\n'
+        ).replace("2026-04-30", _RECENT_DAY)
     )
     monkeypatch.setenv("WRIT_FRICTION_LOG", str(p))
     return p
