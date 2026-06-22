@@ -57,6 +57,10 @@ dependencies = [
     # writ/retrieval/pipeline.py), so this dep must be present for
     # the daemon to start without an override.
     "onnxruntime>=1.20,<2",
+    # Required by writ/compression/clusters.py (HDBSCAN/KMeans) and the
+    # `writ compress` CLI. Was imported but never declared, so fresh installs
+    # broke on `import sklearn` (HDBSCAN landed in scikit-learn 1.3).
+    "scikit-learn>=1.3,<2",
 ]
 
 [project.urls]

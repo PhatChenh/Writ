@@ -73,23 +73,36 @@ require_tool python3 "Install Python 3.11+ (e.g., apt install python3 python3-ve
 require_tool brew    "Install Homebrew (https://brew.sh/)." || missing=1
 require_tool jq      "Install jq (apt install jq / brew install jq)." || missing=1
 require_tool curl    "Install curl (apt install curl / brew install curl)." || missing=1
-require_tool envsubst "Install gettext (apt install gettext-base / brew install gettext)." || missing=1
+# NOTE: no envsubst requirement here. The non-plugin bootstrap.sh needs it for
+# CLAUDE.md/settings templating; the plugin variant ships hooks/commands/agents
+# via the plugin manifest and never invokes envsubst, so requiring it only
+# blocks installs on machines without gettext for no reason (Phase 6 fix).
 if [ $missing -ne 0 ]; then
     err "One or more prerequisites missing. See messages above."
     exit 1
 fi
 
-# Python version check
-PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PY_MAJOR=${PY_VER%.*}
-PY_MINOR=${PY_VER#*.}
-if [ "$PY_MAJOR" -lt "$MIN_PYTHON_MAJOR" ] \
-   || { [ "$PY_MAJOR" -eq "$MIN_PYTHON_MAJOR" ] && [ "$PY_MINOR" -lt "$MIN_PYTHON_MINOR" ]; }; then
-    err "python3 version is $PY_VER; need >= $MIN_PYTHON_MAJOR.$MIN_PYTHON_MINOR"
-    echo "   Install a newer Python (pyenv is a clean way to manage versions)." >&2
+# Resolve a >= 3.11 interpreter for the venv base. Bare `python3` is often the
+# macOS CommandLineTools 3.9; probe versioned names first (each candidate is
+# run so a broken pyenv shim is skipped). Mirrors the $WRIT_PYTHON resolver in
+# bin/lib/common.sh (which can't be reused here -- it prefers the venv we are
+# about to create). Override: WRIT_PYTHON=/path/to/python.
+PYTHON_BIN=""
+for cand in "${WRIT_PYTHON:-}" python3.12 python3.11 python3; do
+    [ -z "$cand" ] && continue
+    if command -v "$cand" >/dev/null 2>&1 \
+       && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' 2>/dev/null; then
+        PYTHON_BIN="$cand"; break
+    fi
+done
+if [ -z "$PYTHON_BIN" ]; then
+    err "no python >= $MIN_PYTHON_MAJOR.$MIN_PYTHON_MINOR found (tried python3.12, python3.11, python3)"
+    echo "   Install a newer Python (pyenv is a clean way to manage versions)," >&2
+    echo "   or set WRIT_PYTHON=/path/to/python3.12." >&2
     exit 1
 fi
-ok "python3 $PY_VER"
+PY_VER=$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+ok "python $PY_VER ($PYTHON_BIN)"
 
 # ── 2. Platform check and Redis ensure ────────────────────────────────────
 step "Checking platform and Redis"
@@ -130,7 +143,7 @@ mkdir -p "$WRIT_DATA"
 printf '%s\n' "$WRIT_DIR" > "$WRIT_DATA/plugin-root"
 ok "plugin-root marker written ($WRIT_DATA/plugin-root)"
 if [ ! -d "$VENV_DIR" ]; then
-    python3 -m venv "$VENV_DIR"
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
     ok "created $VENV_DIR"
 else
     ok "venv already exists"

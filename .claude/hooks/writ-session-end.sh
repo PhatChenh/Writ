@@ -94,5 +94,15 @@ while path != '/':
     path = os.path.dirname(path)
 " "$CACHE" "$SESSION_ID" 2>/dev/null || true
 
+# 5. Project-rule export safety-net (D4-04): flush graph PROJ- constraints to
+# the committed docs/rules/. Primary export is author-time (the guardrail skill
+# exports the turn it authors); this catches rules authored via the raw CLI.
+# Run ONLY when the daemon is already DOWN -> the export's direct connection is a
+# cheap no-bounce op that fits the 1.5s budget. If the daemon is UP, skip: the
+# dispatcher would stop+restart it (too slow here, and pointless at session end).
+if ! curl -fsS --max-time 1 "http://${WRIT_SESSION_HOST:-localhost}:${WRIT_PORT}/health" >/dev/null 2>&1; then
+    bash "$WRIT_DIR/bin/writ-project-rules.sh" export >/dev/null 2>&1 || true
+fi
+
 hook_timer_end "$HOOK_START_NS" "writ-session-end" "$SESSION_ID" ""
 exit 0

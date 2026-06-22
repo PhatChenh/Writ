@@ -77,7 +77,14 @@ class TestBootstrapPluginContent:
         )
 
     def test_bootstrap_plugin_checks_prerequisites(self, content: str) -> None:
-        """Script must check for python3 >= 3.11, docker, jq, curl, and envsubst."""
+        """Script must check for python3 >= 3.11, jq, and curl.
+
+        NOTE: docker is intentionally NOT required -- this fork replaced Neo4j
+        (Docker) with embedded FalkorDBLite. envsubst is also not required by
+        the plugin bootstrap: it ships hooks/commands/agents via the plugin
+        manifest and never invokes envsubst (only the non-plugin bootstrap.sh
+        does, for CLAUDE.md/settings templating).
+        """
         lowered = content.lower()
         assert "python3" in lowered, (
             "bootstrap-plugin.sh must check for python3"
@@ -85,17 +92,11 @@ class TestBootstrapPluginContent:
         assert "3.11" in content or "3\\.11" in content, (
             "bootstrap-plugin.sh must verify python3 >= 3.11"
         )
-        assert "docker" in lowered, (
-            "bootstrap-plugin.sh must check for docker"
-        )
         assert "jq" in content, (
             "bootstrap-plugin.sh must check for jq"
         )
         assert "curl" in content, (
             "bootstrap-plugin.sh must check for curl"
-        )
-        assert "envsubst" in content, (
-            "bootstrap-plugin.sh must check for envsubst"
         )
 
     def test_bootstrap_plugin_idempotent(self, content: str, tmp_path: Path) -> None:

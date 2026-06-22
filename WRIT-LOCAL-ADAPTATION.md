@@ -19,6 +19,14 @@
 
 **Affects later work:** 4A/4B/4C input-skill rewrites (constraints, ADRs, tech-debt) target the graph, not flat docs.
 
+**⚠️ NARROWED 2026-06-21 (Phase 6, user-blessed).** Graph-canonical applies to **CONSTRAINTS only**. After fit analysis (see D4-04), ADR / tech-debt / open-questions are BETTER as flat docs:
+- **Constraints** → `PROJ-` Rule nodes (clean 1:1 fit). ✅ graph-canonical.
+- **ADR** → narrative stays flat (`docs/adr/NNNN-slug.md`, append-only); *optionally* spawns a `PROJ-` rule when the decision carries a durable enforceable consequence (`source_attribution=ADR-NNNN`). Forcing the whole ADR into a Rule distorts trigger/violation/pass_example, pollutes retrieval, and fights the append-only "never edit old ADR" discipline.
+- **Tech debt** → flat `docs/TECH_DEBT.md`. TD = deferred work, semantically the *opposite* of a law; a Rule node would surface it in `writ query` as a coding rule.
+- **Open questions** → flat `docs/OPEN_QUESTIONS.md`. Not rules.
+
+So "no hand-maintained flat docs" holds for constraints; ADR/TD/OQ remain flat by design.
+
 ---
 
 ## D4-02 · Per-repo isolation via "A-auto" (deterministic port + on-demand auto-start)
@@ -71,10 +79,37 @@ This matters because the author's corpus is **100% universal** (security, clean-
 
 ---
 
+## D4-04 · Project-rule authoring topology (graph ↔ bible, two layers) — locked 2026-06-21 (Phase 6)
+
+**Decision.** Project-specific CONSTRAINTS are authored as **`PROJ-<DOMAIN>-NNN` Rule nodes** with `authority=human`, living in the **per-repo graph** (A-auto isolated), and exported to a **committed per-repo `docs/rules/`**. This is a SECOND corpus layer on top of the shared universal `bible/`.
+
+**Two layers (do not conflate):**
+| Layer | Lives in | Version-controlled? | Seeds into a repo's graph |
+|---|---|---|---|
+| **Shared bible** (universal: security/SOLID/testing/…) | `falkor-writ/bible/` (the plugin) | yes, in the plugin repo | by-value, every repo, at bootstrap (`writ import-markdown bible`) |
+| **Per-repo project rules** (`PROJ-` constraints) | `<repo>/docs/rules/` (export) + that repo's graph | yes, in *that* repo | its own graph, re-seeded from `docs/rules/` |
+
+**Why `docs/rules/` is mandatory (not just the graph).** `.writ/graph.db` is gitignored, binary, non-portable, and **volatile** (the documented orphan-redis BGSAVE incident clobbered it to empty; re-seed pulls the *shared* bible, which does NOT contain project rules). So project rules would be silently lost. `docs/rules/` is the committed system-of-record that survives clobber/clean/machine-moves.
+
+**Discriminator = the `PROJ-` rule_id prefix, NOT `authority`.** Bible rules import as `authority=human` too (`writ/graph/ingest.py:154`), so authority cannot separate the two layers. `authority=human` is still the correct *provenance* for project rules; the export/list **filter** keys on the `PROJ-` prefix.
+
+**Engine (adapt-only, ZERO `writ/` core edits):** `bin/lib/project_rules.py` + dispatcher `bin/writ-project-rules.sh` — `author` (reuse `writ.gate.structural_gate` for conflict/dup screen → `db.create_rule` authority=human → export), `export` (PROJ- filter → `docs/rules/`, reuse `writ.export` helpers), `list` (explicit load-all verbatim, no ranking), `seed` (`writ import-markdown docs/rules --only Rule`, clobber-survival). **Verified end-to-end 2026-06-21:** author→gate-pass→ingest→export 1 file (NOT the 276); list verbatim; delete→seed→restored; universal corpus intact at 276.
+
+**Direction triggers:**
+- **EXPORT** (graph → `docs/rules/`): author-time (the skill exports the same turn it authors) + SessionEnd safety-net. Repo-entry is the WRONG moment to export (graph is the source, may be empty/stale).
+- **IMPORT / re-seed** (`docs/rules/` → graph): SessionStart (clobber survival). Repo-entry = import; authoring/session-end = export. Symmetric.
+
+**ADR hybrid (4B).** ADR narrative is flat + append-only; when it implies a durable rule, author that rule via the SAME engine with `source_attribution=ADR-NNNN` and chain `SUPERSEDES` between rules when a superseding ADR replaces an old one.
+
+**Constraint surfacing in build-pipeline = explicit load-all verbatim, NOT RAG ranking.** Verified (item-4 check): the only path that reaches build-pipeline workers is `writ-subagent-start.sh`'s task-prompt `/query`, which is retrieval-**ranked** — a constraint can silently fail to inject if it doesn't rank top-K. `writ-read-rag` is review/debug-only (never fires in build-pipeline's conversation/work modes); the orchestrator gets RAG suppressed. So each build-pipeline phase prompt deterministically loads the **full** `PROJ-` set (`writ-project-rules.sh list`) — empty repo → nothing injected (no forced minimum, no misleading near-miss); each constraint's own `trigger` field lets the worker judge relevance.
+
+**Flat-doc layout (mixed by nature):** ADR → `docs/adr/NNNN-slug.md` (multi-file, append-only, supersession links); TD → single `docs/TECH_DEBT.md`; OQ → single `docs/OPEN_QUESTIONS.md`. `docs/rules/` (constraint export) is multi-file grouped by domain — distinct from the flat docs.
+
+---
+
 ## Open / not yet decided
 
-- 4A/4B/4C: exact mapping of constraints / ADRs / tech-debt into graph node types
-  + which input skills get rewired.
+- ~~4A/4B/4C: exact mapping of constraints / ADRs / tech-debt into graph node types~~ ✅ RESOLVED → D4-04 (constraints→graph, ADR hybrid, TD/OQ flat).
 - 4D: hook coexistence (our PostToolUse grep guards vs Writ's 33 hooks) + which of the 33 hooks we adopt (pick-list pending).
 - 4E/4F/4G: process integration, bible process-rules, corpus seeding.
 - Plugin activation scope (project-scoped vs global `patch-global-config.sh`, which overwrites global `~/.claude/CLAUDE.md`).
@@ -346,7 +381,19 @@ Source of truth: `writ/graph/schema.py` (Pydantic models), `writ/graph/db.py:40`
 
 ## Handoff — next AI starts here
 
-**Where we are:** Phase 4 adaptation **implementation** in progress on branch `phase4-adaptation` (off `main`). Hook decisions all locked (ledger above: 31 keep / 2 drop). Working the ordered **Adaptation work plan** (table above). **Work-plan #1, #2, #3, #4, #5 all DONE + tested (2026-06-21). #2 was RE-DONE under the plugin model (see "Plugin-model consolidation" below). Next = py3.12 pin (#5-adjacent), then #6 (4A/4B/4C).** See the "#5 — review flow: DONE" record below. Read the per-step records below in order: Plugin-model consolidation → #3 (path/template batch) → #4 (gate reconciliation). Distribution model = PLUGIN (one `claude plugin install writ`; per-repo isolation is data-only via A-auto). Plugin is NOT yet registered/installed (writ dormant) — gate behavior verified at logic level only; full end-to-end needs `claude plugin install writ` + bootstrap.
+**⏩ LATEST (2026-06-22) — Phase 6 DONE + plugin INSTALLED + verified.** Branch `phase6-graph-authoring` (off `main`; Phase 4 #1–#5 + py3.12 pin already merged to main). Phase 6 = D4-04 project-rule graph authoring (constraints → `PROJ-` Rule nodes → committed `docs/rules/`; ADR hybrid; TD/OQ flat). **All work plan items 1–5 + py3.12 pin are committed on `main`; Phase 6 is uncommitted on `phase6-graph-authoring`.**
+
+**Phase 6 deliverables (uncommitted):** engine `bin/lib/project_rules.py` + dispatcher `bin/writ-project-rules.sh` (author/list/export/seed, **auto-manages the daemon** — stop-for-op-restart, since the daemon holds db.py's single-writer lock); SessionStart re-seed hook + SessionEnd export step (both gate on daemon-DOWN; the dispatcher bounces the daemon when up); guardrail-check in-repo skill v2.0.0 (constraint→graph, TD/OQ flat); build-pipeline integration (TD/OQ scan + constraint preload via **load-all-verbatim, NOT ranked RAG** + worker-report→orchestrator-persist); ADR-FORMAT hybrid note (grill + codebase-design-analysis); decision record D4-04 above + D4-01 narrowed. **Verified live:** author/list/export/seed end-to-end, daemon-bounce author (daemon re-warms with the new rule), clobber-restore via seed, corpus stays 276.
+
+**Install + test state (2026-06-22):** `scripts/bootstrap-plugin.sh` runs clean (see `INSTALL-GUIDE.md`). **3 real install bugs fixed:** envsubst spurious-prereq removed; bootstrap python gate resolves ≥3.11 (`WRIT_PYTHON` override); `scikit-learn` added to pyproject. **Tests `1680 pass / 55 fail`, 0 Phase 6 regressions.** Fixed: bash-3.2 `writ-memory-policy-guard.sh` (Python extracted → `.claude/hooks/lib/memory_policy_match.py`), 2 stale tests. **Remaining 55 = pre-existing debt, catalogued in `docs/KNOWN-TEST-FAILURES.md`** (the ×9 settings→hooks.json drift is an EASY mechanical batch using the `test_session_end.py` fix as template).
+
+**⚠️ Run the suite correctly:** `WRIT_PORT=8765 bash scripts/stop-server.sh` then `PATH="$HOME/.cache/writ/.venv/bin:$PATH" ~/.cache/writ/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider`. Daemon must be DOWN (prod-graph tests open the graph directly); `python3` must be ≥3.11 (else ~80 false subprocess failures). The compat symlink `~/.claude/skills/writ -> <repo>` must exist (bootstrap doesn't create it; tests hardcode the path).
+
+**Next:** (a) commit Phase 6 (pending user) + the install/test fixes; (b) optional: batch-fix the ×9 settings→hooks.json tests; (c) #7 (CodeGraph blast-radius — engine decided, see work-plan row 7); (d) harness plugin registration (`claude plugin install`) is a manual prereq, never auto-run.
+
+---
+
+**Where we are (Phase 4 history below):** Phase 4 adaptation **implementation** in progress on branch `phase4-adaptation` (off `main`). Hook decisions all locked (ledger above: 31 keep / 2 drop). Working the ordered **Adaptation work plan** (table above). **Work-plan #1, #2, #3, #4, #5 all DONE + tested (2026-06-21). #2 was RE-DONE under the plugin model (see "Plugin-model consolidation" below). Next = py3.12 pin (#5-adjacent), then #6 (4A/4B/4C).** See the "#5 — review flow: DONE" record below. Read the per-step records below in order: Plugin-model consolidation → #3 (path/template batch) → #4 (gate reconciliation). Distribution model = PLUGIN (one `claude plugin install writ`; per-repo isolation is data-only via A-auto). Plugin is NOT yet registered/installed (writ dormant) — gate behavior verified at logic level only; full end-to-end needs `claude plugin install writ` + bootstrap.
 
 **⚠️ Distribution model LOCKED 2026-06-21 — PLUGIN model (supersedes the earlier hand-copy approach).** Writ ships as ONE Claude Code plugin (manifest `.claude-plugin/plugin.json`): commands + agents + hooks + `bin/` travel via `claude plugin install`; per-repo isolation is DATA-only (A-auto daemon+graph per repo) — **no Writ source copied into other repos.** The repo (falkor-writ) is the single version-controlled source; a new machine runs the install script once. The earlier AI scattered files into global `~/.claude/{skills,commands}` with no VC — that was the dumpster fire; this consolidation fixes it.
 

@@ -44,59 +44,21 @@ if [ -z "$CONTENT" ]; then
     exit 0
 fi
 
-# Detect override marker. If present, allow through with no check.
-# Two accepted forms:
-#   YAML: explicit_rule_override: true
-#   Body: override authorized by: <name>
-OVERRIDE_MATCHED=$(python3 <<PY
-import sys, re
-content = $(python3 -c "import sys,json; print(json.dumps(sys.argv[1]))" "$CONTENT" 2>/dev/null)
-if re.search(r'explicit_rule_override\s*:\s*true', content, re.IGNORECASE):
-    print('yes')
-elif re.search(r'override\s+authorized\s+by\s*:', content, re.IGNORECASE):
-    print('yes')
-else:
-    print('no')
-PY
-) || OVERRIDE_MATCHED="no"
+# Detect override marker + rule-weakening phrases via the extracted matcher.
+# Kept in a separate .py (NO inline heredoc) so macOS bash 3.2 -- which
+# mis-parses heredoc + embedded-quote combinations -- never sees the patterns.
+# Emits JSON: {"override": "yes"|"no", "matched": [<phrase>, ...]}.
+WG_RESULT=$(WG_CONTENT="$CONTENT" python3 "$HOOK_DIR/lib/memory_policy_match.py" 2>/dev/null) || WG_RESULT='{"override":"no","matched":[]}'
 
+# Override marker present -> allow through with no check.
+OVERRIDE_MATCHED=$(printf '%s' "$WG_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('override','no'))" 2>/dev/null) || OVERRIDE_MATCHED="no"
 if [ "$OVERRIDE_MATCHED" = "yes" ]; then
     exit 0
 fi
 
-# Pattern match rule-weakening phrases. Checks the content (case-insensitive).
-# If ANY pattern matches, deny. Patterns are tuned to PSR-003 phrasing plus
-# reasonable variants; false-positives can be escaped via the override marker.
-MATCHED=$(python3 <<PY
-import sys, re
-content = $(python3 -c "import sys,json; print(json.dumps(sys.argv[1]))" "$CONTENT" 2>/dev/null)
-patterns = [
-    # Skip / no verification variants
-    r'\bskip\s+(?:the\s+)?(?:verification|verify|test\s+run|tests?|check|checks|validation|validate)\b',
-    r'\bno\s+(?:verification|verify|re-?run|re-?runs?|fresh\s+verification)\b',
-    r'\bnever\s+(?:re-?run|verify|test)\b',
-    r'\bdon\'?t\s+(?:re-?run|verify|re-?verify)\b',
-    # Face-value / trust-as-bypass
-    r'take\s+(?:the\s+)?[\w\s\-]{0,40}?(?:report|claim|output|result|answer)\s+at\s+face\s+value',
-    r'\btrust\s+[\w\s\-]{0,20}?(?:source|sub-?agent|implementer|worker|report)\s*=\s*(?:no|skip|never|face)',
-    # Rule-override / bypass language outside an authorized marker
-    r'\b(?:override|bypass|weaken|suspend|disable)\s+[\w\s\-]{0,20}?(?:ENF-|rule|verify|discipline|verification)',
-    # PSR-003 exact phrasing
-    r'["\']?i\s+trust\s+you["\']?[^\n]{0,120}(?:skip|no|never|face\s+value|move\s+on)',
-    r'take\s+[\w\s\-]{0,40}?\s+at\s+face\s+value\s+and\s+move\s+on',
-]
-matched = []
-for p in patterns:
-    m = re.search(p, content, re.IGNORECASE)
-    if m:
-        matched.append(m.group(0)[:80])
-if matched:
-    import json as _j
-    print(_j.dumps(matched))
-else:
-    print('')
-PY
-) || MATCHED=""
+# matched -> JSON array of phrases (empty string if none), preserving the
+# downstream contract (MATCHED is later parsed as JSON for the friction log).
+MATCHED=$(printf '%s' "$WG_RESULT" | python3 -c "import sys,json; m=json.load(sys.stdin).get('matched',[]); print(json.dumps(m) if m else '')" 2>/dev/null) || MATCHED=""
 
 if [ -z "$MATCHED" ]; then
     exit 0
@@ -166,7 +128,10 @@ fi
 # Emit deny directive. The assistant should either (a) revise the memory
 # to not encode a rule bypass, or (b) add an explicit override marker
 # with authorization.
-python3 <<PY
+# NOTE: quoted heredoc delimiter (<<'PY'). The body is pure static Python with
+# no shell expansion; quoting it makes bash 3.2 (macOS default) treat it
+# literally, avoiding a `bash -n` / runtime parse error on this deny path.
+python3 <<'PY'
 import json
 reason = (
     "[Writ: memory rule-weakening blocked] This memory write would persist "

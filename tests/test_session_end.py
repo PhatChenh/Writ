@@ -261,16 +261,19 @@ class TestLogSessionMetricsRemoval:
 
 
 class TestSessionEndRegistration:
-    """writ-session-end.sh must be registered under SessionEnd in settings.json."""
+    """writ-session-end.sh must be registered under SessionEnd in the plugin's
+    hooks/hooks.json (the plugin model registers hooks there, not in the user's
+    settings.json)."""
 
     def _load_settings(self) -> dict[str, Any]:
-        home = os.path.expanduser("~")
-        settings_path = os.path.join(home, ".claude", "settings.json")
-        with open(settings_path) as f:
+        # Plugin model: hooks live in <repo>/hooks/hooks.json, not ~/.claude/settings.json.
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        hooks_path = os.path.join(repo_root, "hooks", "hooks.json")
+        with open(hooks_path) as f:
             return json.load(f)
 
     def test_session_end_hook_registered_in_settings(self) -> None:
-        """settings.json SessionEnd event includes writ-session-end.sh."""
+        """hooks.json SessionEnd event includes writ-session-end.sh."""
         settings = self._load_settings()
         hooks = settings.get("hooks", {})
         session_end_hooks = hooks.get("SessionEnd", [])

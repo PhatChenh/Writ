@@ -4,6 +4,14 @@ _Last updated: 2026-06-21_
 
 ## Current Position
 
+**Phase 6 — Project-rule graph authoring (D4-04): ✅ DONE + installed + verified (2026-06-22).** Branch `phase6-graph-authoring` (off `main`). Constraints → `PROJ-` Rule nodes (`authority=human`), exported to committed per-repo `docs/rules/`; ADR = flat + optional rule extract; TD/OQ stay flat (D4-01 narrowed to constraints-only). Engine `bin/lib/project_rules.py` + dispatcher `bin/writ-project-rules.sh` (author/list/export/seed), **auto-manages the daemon** (stops the per-repo daemon for a direct-graph op, restarts after — required because the daemon holds the single-writer lock). SessionStart re-seed (clobber survival) + SessionEnd export safety-net hooks. guardrail-check rewired (in-repo skill v2.0.0); build-pipeline integration (TD/OQ scan, constraint preload load-all, worker-report→orchestrator-persist); ADR-FORMAT hybrid note.
+
+- **Plugin INSTALLED + verified (2026-06-22):** `scripts/bootstrap-plugin.sh` ran clean → venv `~/.cache/writ/.venv`, daemon healthy (276 rules), 11 skills installed. See **`INSTALL-GUIDE.md`** (root). **3 real install bugs fixed:** (1) spurious `envsubst` prereq removed from bootstrap-plugin.sh; (2) bootstrap python gate now resolves ≥3.11 (`python3.12`/`python3.11` probe + `WRIT_PYTHON` override) instead of bare `python3`; (3) `scikit-learn` added to pyproject deps (used by `writ.compression` but undeclared).
+- **Test suite: `1680 passed / 55 failed`** (daemon stopped, ≥3.11 `python3` on PATH). **0 Phase 6 regressions** (failing set is a strict subset of pre-Phase-6). Fixed this session: bash-3.2 `writ-memory-policy-guard.sh` parse break (extracted Python → `.claude/hooks/lib/memory_policy_match.py`, +21 tests), 2 stale tests (bootstrap docker/envsubst, session_end settings→hooks.json). **Remaining 55 = pre-existing debt, fully catalogued in `docs/KNOWN-TEST-FAILURES.md`** (settings→hooks.json drift ×9 EASY, import-markdown async ×16, phase5 analyzers ×~15, sentence_transformers fallback ×2, envsubst harness_installer ×6, misc ×4).
+- **NOT committed yet** (commit pending). **NOT pushed.** Harness plugin registration (`claude plugin install`) is a documented manual prereq, not auto-run.
+
+---
+
 **Phase 4 — Workflow Adaptation: 🔵 IN PROGRESS (grill/design stage, NO code yet).** Operating mode locked: this repo is a **vendored fork in adapt-and-learn mode** — do NOT develop new features into Writ; adapt it + rewire our own skills/hooks. **All Phase 4 rationale + decisions live in `WRIT-LOCAL-ADAPTATION.md` (repo root) — READ FIRST.**
 
 Three decisions locked (2026-06-21):

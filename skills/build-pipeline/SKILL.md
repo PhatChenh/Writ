@@ -135,6 +135,32 @@ digraph loop {
      WR="${CLAUDE_PLUGIN_ROOT:-$(cat "${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/plugin-root" 2>/dev/null)}"; [ -x "$WR/bin/writ-mode-set.sh" ] && bash "$WR/bin/writ-mode-set.sh" work 2>/dev/null || true
      ```
 
+## Guardrails integration (D4-04 — no-op outside a Writ repo)
+
+Project guardrails (constraints / tech-debt / open-questions / ADRs) thread through the pipeline. All commands no-op silently outside a Writ repo. Resolve the engine once at pipeline start:
+
+```bash
+WR="${CLAUDE_PLUGIN_ROOT:-$(cat "${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/plugin-root" 2>/dev/null)}"; PR="$WR/bin/writ-project-rules.sh"
+```
+
+**1. Phase-start TD/OQ scan (orchestrator, before the design dispatch).** TD/OQ are small flat docs — the orchestrator reads them directly (not code). Read `docs/TECH_DEBT.md` + `docs/OPEN_QUESTIONS.md`; surface any entry that bears on the current roadmap phase to the user ("TD-07 and OQ-03 look in-scope for this phase — fold them in?") and pass the relevant ones into the design dispatch prompt as inputs.
+
+**2. Constraint preload (orchestrator, once; injected into EVERY dispatch).** Load the FULL project-constraint set verbatim — NOT a ranked query (a ranked query both misses far-but-relevant constraints and injects near-but-irrelevant ones):
+
+```bash
+[ -x "$PR" ] && bash "$PR" list || true
+```
+
+Empty output → no constraints, inject nothing (no forced minimum). Otherwise paste the set into each subagent dispatch prompt under `## Active project constraints` — the subagent judges relevance per constraint via its `Trigger`. This is the reliable path: RAG/subagent-start retrieval is ranked and can silently drop a constraint, so do NOT rely on it here.
+
+**3. Discovery capture (workers report → orchestrator persists).** Subagents are isolated; they must NOT write guardrail docs or author rules themselves (concurrent-write + daemon-access mess). Instead:
+- **Every dispatch prompt** ends with: *"If you discover a constraint, tech-debt item, open question, or architectural decision while working, do NOT write it anywhere — list it in a `## Discoveries` section of your return summary (type + one-line description + where you saw it)."*
+- **At each review/phase gate** the orchestrator collects reported `## Discoveries` and persists them (confirm with the user first):
+  - **Tech debt** → append a `TD-NN` card to `docs/TECH_DEBT.md` (`/guardrail-check`).
+  - **Open question** → append an `OQ-NN` card to `docs/OPEN_QUESTIONS.md`.
+  - **Constraint** → `bash "$PR" author …` (graph + `docs/rules/` export); remind user to commit `docs/rules/`.
+  - **ADR** → write `docs/adr/NNNN-slug.md`; if it carries a durable enforceable consequence, offer the hybrid rule extract (`--source-attribution ADR-NNNN`).
+
 ### What runs where, per step
 
 **Heavy tier:**
