@@ -439,9 +439,10 @@ class TestSettingsJsonCompactionHooks:
 
     def _load_settings(self) -> dict[str, Any]:
         import os
-        home = os.path.expanduser("~")
-        settings_path = os.path.join(home, ".claude", "settings.json")
-        with open(settings_path) as f:
+        # Plugin model: hooks live in <repo>/hooks/hooks.json, not ~/.claude/settings.json.
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        hooks_path = os.path.join(repo_root, "hooks", "hooks.json")
+        with open(hooks_path) as f:
             return json.load(f)
 
     def _extract_commands(self, entries: list) -> list[str]:

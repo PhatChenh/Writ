@@ -405,9 +405,10 @@ class TestSettingsJsonConsolidation:
     """Hook consolidation must be reflected in settings.json."""
 
     def _load_settings(self) -> dict[str, Any]:
-        home = os.path.expanduser("~")
-        settings_path = os.path.join(home, ".claude", "settings.json")
-        with open(settings_path) as f:
+        # Plugin model: hooks live in <repo>/hooks/hooks.json, not ~/.claude/settings.json.
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        hooks_path = os.path.join(repo_root, "hooks", "hooks.json")
+        with open(hooks_path) as f:
             return json.load(f)
 
     def _get_pretooluse_write_commands(self) -> list[str]:
@@ -463,6 +464,11 @@ class TestSettingsJsonConsolidation:
             "pre-validate-file.sh must remain in PreToolUse Write|Edit (not consolidated)"
         )
 
+    @pytest.mark.skip(
+        reason="Plugin model: hooks run via the plugin hooks.json; no "
+        "settings.json Bash-permission grant is required (bootstrap-plugin.sh "
+        "writes none). Obsolete pre-plugin requirement."
+    )
     def test_writ_pre_write_dispatch_bash_permission_added(self) -> None:
         """settings.json Bash permission for writ-pre-write-dispatch.sh is added."""
         settings = self._load_settings()

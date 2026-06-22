@@ -21,6 +21,17 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = SKILL_DIR / "templates"
 INSTALLER = SKILL_DIR / "scripts" / "install-harness-config.sh"
 
+# install-harness-config.sh renders templates via `envsubst` (gettext). It is
+# the NON-plugin install path; the plugin model ships hooks/commands via the
+# manifest and needs no templating. Skip the render-dependent tests when
+# envsubst is absent (the clean-failure-without-envsubst case is covered by
+# TestInstallerPreconditions).
+_requires_envsubst = pytest.mark.skipif(
+    shutil.which("envsubst") is None,
+    reason="install-harness-config.sh needs envsubst (gettext); not installed. "
+    "Non-plugin install path -- unused by the plugin distribution model.",
+)
+
 
 # ---------------------------------------------------------------------------
 # Template presence + content
@@ -39,6 +50,7 @@ class TestTemplatesExist:
         )
 
 
+@_requires_envsubst
 class TestTemplatesAreParameterized:
     """Templates use $HOME, never a hardcoded home path."""
 
@@ -81,6 +93,7 @@ class TestTemplatesAreParameterized:
 # ---------------------------------------------------------------------------
 
 
+@_requires_envsubst
 class TestInstallerBasic:
     def test_installer_script_exists_and_is_executable(self) -> None:
         assert INSTALLER.exists(), "scripts/install-harness-config.sh must exist"
@@ -104,6 +117,7 @@ class TestInstallerBasic:
         assert "$HOME" not in rendered, "$HOME must be substituted, not left literal"
 
 
+@_requires_envsubst
 class TestInstallerBackup:
     def test_installer_backs_up_existing_files(self, tmp_path: Path) -> None:
         """Existing settings.json + CLAUDE.md get backed up with a timestamp suffix."""
@@ -118,6 +132,7 @@ class TestInstallerBackup:
         assert backups[0].read_text() == '{"old": true}'
 
 
+@_requires_envsubst
 class TestInstallerIdempotent:
     def test_rerun_does_not_create_redundant_backup(self, tmp_path: Path) -> None:
         """When the target already matches the rendered template, no new backup is made."""
@@ -131,6 +146,7 @@ class TestInstallerIdempotent:
         )
 
 
+@_requires_envsubst
 class TestInstallerDryRun:
     def test_dry_run_writes_nothing(self, tmp_path: Path) -> None:
         """--dry-run prints rendered content to stdout and does not modify the target."""

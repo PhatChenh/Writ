@@ -353,7 +353,9 @@ class TestCwdChangedSettingsJson:
     """writ-cwd-changed.sh is registered in settings.json."""
 
     def _load_settings(self) -> dict:
-        with open(SETTINGS_PATH) as f:
+        # Plugin model: hooks live in <repo>/hooks/hooks.json, not ~/.claude/settings.json.
+        hooks_path = Path(__file__).resolve().parent.parent / "hooks" / "hooks.json"
+        with open(hooks_path) as f:
             return json.load(f)
 
     def test_cwd_changed_event_registered_in_settings(self) -> None:
@@ -370,6 +372,11 @@ class TestCwdChangedSettingsJson:
             "CwdChanged event must register writ-cwd-changed.sh"
         )
 
+    @pytest.mark.skip(
+        reason="Plugin model: hooks run via the plugin hooks.json; no "
+        "settings.json Bash-permission grant is required (bootstrap-plugin.sh "
+        "writes none). Obsolete pre-plugin requirement."
+    )
     def test_cwd_changed_hook_bash_permission_in_settings(self) -> None:
         """settings.json includes a Bash permission entry for writ-cwd-changed.sh."""
         settings = self._load_settings()

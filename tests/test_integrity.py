@@ -7,6 +7,7 @@ Each test is isolated (TEST-ISO-001).
 
 from __future__ import annotations
 
+import importlib.util
 from datetime import date, timedelta
 
 import pytest
@@ -116,6 +117,12 @@ class TestStalenessDetection:
         assert "FRESH-RULE-001" not in stale_ids
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("sentence_transformers") is None,
+    reason="redundancy detection needs sentence-transformers ([fallback] extra); "
+    "production installs exclude it (ONNX is the core embedding path). "
+    "The library-absent behaviour is covered by the *MissingLibrary tests.",
+)
 class TestRedundancyDetection:
     """Near-identical rule content detection."""
 
