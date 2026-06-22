@@ -107,6 +107,39 @@ This matters because the author's corpus is **100% universal** (security, clean-
 
 ---
 
+## D4-05 · Per-repo bootstrap seeding + venv-path resilience (FIX, 2026-06-22)
+
+**Symptom.** In a fresh repo (`mkt_engine`), Writ never came online: every prompt's RAG hook printed `[Writ: server unavailable, proceeding without rules]`. A daemon either never started or started with `rule_count: 0`. The classifier-denial of `writ-mode-set.sh` (seen separately) was a **red herring** — not the cause.
+
+**Two root causes, one underlying.** Both trace to **bootstrap paths that were never migrated to the D4-02 per-repo model**, plus an environment drift that broke venv resolution everywhere.
+
+1. **`session-start-bootstrap.sh` was pre-D4-02.** It health-checked a hard-wired global `:8765` and ran `writ serve` with `cd "$WRIT_DIR"` — a single global daemon on the install dir's graph. It (a) used the wrong port (the RAG hook talks to the per-repo derived port, e.g. `8765 + cksum(repo)%1000 = 9098` for `mkt_engine`), and (b) **never seeded a new repo's graph with the bible**. The only bible-seed in the whole system is `bootstrap-plugin.sh:168` (`cd WRIT_DIR && writ import-markdown`), which seeds the *plugin install's own* graph, not any project repo. So a fresh per-repo graph booted empty → `rule_count: 0` → RAG returns nothing. (`writ-seed-project-rules.sh` only restores `PROJ-` constraints from a committed `docs/rules/`; it explicitly does NOT seed the universal bible, and early-exits when there is no `docs/rules/`.)
+
+2. **Venv path drift broke `_writ_resolve_python` (the real killer).** `CLAUDE_PLUGIN_DATA` had moved to `~/.claude/plugins/data/writ-writ` (empty — no venv), while `bootstrap-plugin.sh` installed the venv at `~/.cache/writ/.venv`. `common.sh._writ_resolve_python` (and `session-start-bootstrap`'s `VENV_DIR`) trusted `${CLAUDE_PLUGIN_DATA:-…}/.venv`, missed it, and **silently fell through to system `python3`** — which has no `writ`/`uvicorn` package. Proven: under the real env, `WRIT_PYTHON=python3.12` → `ModuleNotFoundError: No module named 'writ'`. This breaks **every** Writ hook, not just bootstrap: `session-start-bootstrap` exits "venv missing"; the RAG hook's auto-start launches uvicorn under system python → import fails → "empty response."
+
+**Why manual repro initially "worked" and masked it.** Hand-running the hook with `CLAUDE_PLUGIN_DATA=~/.cache/writ` resolved the venv correctly. Only a **real SessionStart** (instrumented trace, see below) exposed the runtime `CLAUDE_PLUGIN_DATA` value. Lesson: replicate the harness env exactly, or instrument and read a real-session trace — do not trust a hand-set env (CLAUDE.md §7).
+
+**Diagnostic method.** Temporary timestamped trace in `session-start-bootstrap.sh` writing `/tmp/writ-bootstrap-trace.log` at each step (entry / venv / stdin / resolved port / seed / daemon). The real-session trace showed `exit: venv missing at /Users/.../plugins/data/writ-writ/.venv` — pinpointing the venv probe as the death point. Trace removed after the fix landed.
+
+**Fix (adapt-only, ZERO `writ/` core edits — touches only `bin/lib/common.sh` + the hook):**
+- `common.sh._writ_resolve_python`: probe the venv at **both** `$CLAUDE_PLUGIN_DATA/.venv` **and** `$HOME/.cache/writ/.venv` (data-dir first, cache second), then versioned interpreters. Self-heals future `CLAUDE_PLUGIN_DATA` moves. Fixes all hooks at once.
+- `session-start-bootstrap.sh`: rewritten **per-repo aware** —
+  1. resolve `VENV_DIR` by the same two-location probe; set `WRIT_DATA` = the resolved venv's parent;
+  2. resolve repo root from the SessionStart stdin `cwd`, `export WRIT_REPO_ROOT`, `source common.sh` to get the per-repo `WRIT_PORT`;
+  3. **seed bible if unseeded** — sentinel-guarded `${REPO}/.writ/.bible-seeded`, idempotent MERGE, run with `cd "$REPO"` so `.writ/graph.db` lands per-repo, and an **absolute** bible path so `import-markdown`'s auto-export-to-`bible/` guard (`path.resolve() == DEFAULT_BIBLE_DIR.resolve()`) stays false → canonical bible never rewritten;
+  4. start uvicorn on the **per-repo** `WRIT_PORT`.
+
+**Verified end-to-end 2026-06-22.** Real auto-fired SessionStart (289-byte harness envelope), cold repo: `venv ok → REPO=mkt_engine PORT=9098 → seed: OK → daemon healthy` in ~6.6s → `rule_count: 276`, `/query` returns rules @ ~44ms. Idempotent re-fire = 0.11s (healthy→exit, sentinel honored, no reseed). Canonical `bible/` rule content unchanged (only the pre-existing install-time `.export_timestamp` was dirty).
+
+**Both copies edited** (live source `all-projects/Writ/**` + the runtime cache mirror `~/.claude/plugins/cache/writ/writ/1.5.0/**`), kept byte-identical. At runtime `CLAUDE_PLUGIN_ROOT=/Users/lap14806/all-projects/Writ/` (directory-source marketplace), so the source copy is authoritative; the cache copy is synced as belt-and-suspenders against a plugin reload.
+
+**Residual / follow-ups (not done):**
+- `bootstrap-plugin.sh` still seeds only the install's own graph and is pre-D4-02; harmless now that SessionStart self-seeds per repo, but unaligned.
+- The RAG hook's own auto-start (`writ-rag-inject.sh`) still does NOT seed — only `session-start-bootstrap` does. If a daemon dies mid-session and the RAG hook respawns it on a still-unseeded repo, it would come up empty. Optional hardening: mirror the sentinel-guarded seed into the RAG hook's auto-start.
+- Changes uncommitted in the Writ repo as of this writing (user's call to commit).
+
+---
+
 ## Open / not yet decided
 
 - ~~4A/4B/4C: exact mapping of constraints / ADRs / tech-debt into graph node types~~ ✅ RESOLVED → D4-04 (constraints→graph, ADR hybrid, TD/OQ flat).

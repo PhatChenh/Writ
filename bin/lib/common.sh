@@ -10,8 +10,19 @@
 # sourcing hook — through it via a wrapper function. Order: bootstrap venv →
 # versioned interpreters → bare python3 (last resort). Override: WRIT_PYTHON=…
 _writ_resolve_python() {
-    local data="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}" cand
-    for cand in "$data/.venv/bin/python" "$data/.venv/bin/python3" python3.12 python3.11 python3; do
+    # Probe the venv at BOTH known data-dir locations. CLAUDE_PLUGIN_DATA can
+    # move between Claude Code versions (e.g. ~/.claude/plugins/data/writ-writ)
+    # while bootstrap-plugin.sh installed the venv at ~/.cache/writ/.venv. Trust
+    # whichever actually has a venv -- otherwise resolution silently falls
+    # through to a system python with no `writ` package and every hook breaks.
+    local cand
+    for cand in \
+        "${CLAUDE_PLUGIN_DATA:+${CLAUDE_PLUGIN_DATA}/.venv/bin/python}" \
+        "${CLAUDE_PLUGIN_DATA:+${CLAUDE_PLUGIN_DATA}/.venv/bin/python3}" \
+        "$HOME/.cache/writ/.venv/bin/python" \
+        "$HOME/.cache/writ/.venv/bin/python3" \
+        python3.12 python3.11 python3; do
+        [ -n "$cand" ] || continue
         command -v "$cand" >/dev/null 2>&1 || continue
         # PROBE: the candidate must actually run AND be >=3.11. A bare
         # `command -v` is not enough — a pyenv shim can exist yet fail to run
