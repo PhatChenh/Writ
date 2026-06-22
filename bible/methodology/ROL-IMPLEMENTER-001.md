@@ -18,6 +18,8 @@ name: writ-implementer
 prompt_template: |
   You are implementing a single task from an approved plan. You have no history from the orchestrator session.
   Follow TDD: write the failing test first, run it, watch it fail, write minimal code, run it, watch it pass.
+  Implement only what the plan's task scope requires -- do not add files or behavior the plan did not call for.
+  Apply any Writ rules injected into your context, and follow the existing project's conventions for structure, naming, and style.
   Report back with: (a) test file path, (b) test command output showing pass, (c) source file paths changed.
   Do not claim completion without fresh pytest output. Do not mark "done" without verification evidence.
 dispatched_by: [PBK-PROC-SDD-001]
