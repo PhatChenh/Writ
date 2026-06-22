@@ -47,14 +47,14 @@ curl http://localhost:8765/health
 # {"status":"healthy"}
 ```
 
-**Patch global config (plugin mode only).** Plugin installs do not write to `~/.claude/settings.json` or `~/.claude/CLAUDE.md`. The Writ-specific Bash allowlist that suppresses permission prompts for read-only and onboarding commands is missing, and the mandatory-workflow instructions that Writ relies on are not installed either. Run this once after bootstrap to bring `~/.claude/` up to the state a standalone install would produce:
+**Patch global config (plugin mode only).** Plugin installs do not write to `~/.claude/settings.json`. The Writ-specific Bash allowlist that suppresses permission prompts for read-only and onboarding commands is missing. Run this once after bootstrap to merge it in:
 
 ```shell
 bash $(claude plugin path writ)/scripts/patch-global-config.sh
 # Use --dry-run first to preview the diff.
 ```
 
-The script does two things: merges the cross-mode allow and deny entries into `~/.claude/settings.json` (existing ordering preserved), and renders `templates/CLAUDE.md` into `~/.claude/CLAUDE.md`. Both steps are idempotent (no-op when already in sync) and back up any pre-existing file before writing. Standalone-install users do not need to run it; `scripts/install-harness-config.sh` already produces the same output.
+By default the script does ONE thing: merges the cross-mode allow/deny entries into `~/.claude/settings.json` (existing ordering preserved, non-destructive). It **does not touch your `~/.claude/CLAUDE.md`**. Writ's workflow/mode/gate guidance is delivered on demand via RAG-injected methodology nodes, not a static CLAUDE.md, so you don't need one. If you specifically want Writ's global CLAUDE.md template rendered too, opt in with `WRIT_PATCH_CLAUDE_MD=1` (it backs up any existing file first). Both steps are idempotent.
 
 The plugin's hooks degrade gracefully until bootstrap completes. The SessionStart hook prints clear setup instructions on every fresh session where any prerequisite is missing, but the session itself is never blocked.
 

@@ -28,7 +28,7 @@ This renders both `templates/settings.json` and `templates/CLAUDE.md`
 into `~/.claude/`, backing up any pre-existing files. Use this on
 first install or after a Writ update that adds new hooks.
 
-**Lighter alternative when only permissions or CLAUDE.md changed:**
+**Lighter alternative when only permissions changed:**
 
 ```bash
 bash ~/.claude/skills/writ/scripts/patch-global-config.sh
@@ -36,7 +36,9 @@ bash ~/.claude/skills/writ/scripts/patch-global-config.sh
 
 This merges the cross-mode allow/deny entries into your existing
 `~/.claude/settings.json` (preserving your ordering and any non-Writ
-entries) and renders `templates/CLAUDE.md` into `~/.claude/CLAUDE.md`.
+entries). By default it does **not** touch `~/.claude/CLAUDE.md` --
+opt in with `WRIT_PATCH_CLAUDE_MD=1` to also render the Writ
+`templates/CLAUDE.md` (it backs up any existing file first).
 Hook registrations are not touched, so this is not a substitute for
 the full install when hooks change. The script is the same one
 plugin-mode users run; standalone users can call it for non-destructive
@@ -91,10 +93,11 @@ bash $(claude plugin path writ)/scripts/bootstrap-plugin.sh
 `install-harness-config.sh` is destructive (renders the templates wholesale,
 backing up any pre-existing files). `bootstrap-plugin.sh` is idempotent and
 re-installs user skills version-gated (step 6b). Slash commands ride the
-plugin (no separate copy step). If the update only touched permissions or
-`templates/CLAUDE.md` (no new hooks), `scripts/patch-global-config.sh` is a
-non-destructive alternative that preserves your existing
-`~/.claude/settings.json` ordering and non-Writ entries.
+plugin (no separate copy step). If the update only touched permissions
+(no new hooks), `scripts/patch-global-config.sh` is a non-destructive
+alternative that preserves your existing `~/.claude/settings.json`
+ordering and non-Writ entries (and leaves `~/.claude/CLAUDE.md` alone
+unless you set `WRIT_PATCH_CLAUDE_MD=1`).
 
 ## 3. Restart the writ daemon (when server.py changes)
 
