@@ -45,12 +45,14 @@ The historical 55 pre-existing failures (none Phase 6 regressions) are all resol
 
 ## Skipped with reason (2 — intentional, documented in-test)
 
-- **`test_phase3b_export_subagent_roles::test_export_check_passes_after_ingest`** — the graph→agent
-  round-trip invariant is **intentionally broken**: `.claude/agents/*.md` were hand-curated far
-  beyond their minimal ROL dispatch-template seeds (CodeGraph protocols, verification steps,
-  `tools:` — which the renderer doesn't even emit), so `--check` always reports drift.
-  **Real follow-up (D4-01):** migrate the curated agent content INTO the ROL corpus + teach the
-  renderer to emit `tools:` so the graph is canonical again — a feature, not a test fix.
+- **`test_phase3b_export_subagent_roles::test_export_check_passes_after_ingest`** — **intentional
+  divergence, no action needed.** Subagents dispatch by `subagent_type`, so Claude Code reads the
+  canonical `.claude/agents/*.md` files directly; **nothing reads the graph ROL nodes for dispatch**
+  (the only consumer is the unused `writ role-prompt` CLI). The agent `.md` files were hand-curated
+  far beyond their terse ROL dispatch-template seeds (CodeGraph protocols, verification steps,
+  `tools:` — which the renderer doesn't emit), so the graph→agent `--check` reports expected drift.
+  The ROL nodes are terse methodology metadata, never meant to *be* the full agent definitions;
+  D4-01 (graph-canonical) governs **rules**, not agents. Verified zero functional impact 2026-06-22.
 - **`test_methodology_companion_orchestrator::test_orchestrator_fires_methodology_companion`** —
   end-to-end against a corpus-loaded LIVE server. The hook runs with `cwd=<fresh tmp git dir>` →
   empty per-test graph, so the methodology query returns nothing. Deterministic execution needs a

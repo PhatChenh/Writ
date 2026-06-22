@@ -80,15 +80,15 @@ class TestExportCheckMode:
     """--check verifies existing files match graph; exit 0 if clean."""
 
     @pytest.mark.skip(
-        reason="Graph->agent round-trip no longer holds: the .claude/agents/*.md "
-        "were hand-curated well beyond their minimal ROL dispatch-template seeds "
-        "(CodeGraph protocols, verification steps, full output formats, tools:) in "
-        "Phase 3/4, and the renderer does not emit tools:. So --check always "
-        "reports drift for writ-implementer / writ-plan-reviewer / "
-        "writ-code-quality-reviewer. Truly closing this means a D4-01 follow-up: "
-        "migrate the curated agent content INTO the ROL corpus (+ teach the "
-        "renderer to emit tools:) so the graph is canonical again -- not a test "
-        "fix. Tracked in docs/KNOWN-TEST-FAILURES.md."
+        reason="Intentional divergence, NOT a bug. Subagents are dispatched by "
+        "subagent_type, i.e. Claude Code reads the canonical .claude/agents/*.md "
+        "files directly -- nothing reads the graph ROL nodes for dispatch (the "
+        "only consumer is the unused `writ role-prompt` CLI). The agent .md files "
+        "were hand-curated well beyond their terse ROL dispatch-template seeds, so "
+        "the graph->agent round-trip --check reports expected drift. The ROL nodes "
+        "are terse methodology metadata, never meant to BE the full agent "
+        "definitions; D4-01 (graph-canonical) applies to RULES, not agents. No "
+        "action needed. See docs/KNOWN-TEST-FAILURES.md."
     )
     def test_export_check_passes_after_ingest(self) -> None:
         """After ingest, --check must report clean. If it fails, the graph DB
