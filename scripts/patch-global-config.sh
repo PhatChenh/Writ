@@ -195,5 +195,13 @@ patch_claude_md() {
 # ─────────────────────────────────────────────────────────────────────────────
 overall=0
 patch_settings || overall=$?
-patch_claude_md || overall=$?
+# CLAUDE.md rendering is OPT-IN. By default this script does NOT touch
+# ~/.claude/CLAUDE.md -- it would replace your global instructions with the Writ
+# template. The settings allowlist merge above is non-destructive and runs
+# always; set WRIT_PATCH_CLAUDE_MD=1 to also render the Writ CLAUDE.md template.
+if [ "${WRIT_PATCH_CLAUDE_MD:-0}" = "1" ]; then
+    patch_claude_md || overall=$?
+else
+    echo "[CLAUDE.md] Skipped (default; your ~/.claude/CLAUDE.md is left untouched). Set WRIT_PATCH_CLAUDE_MD=1 to render the Writ template."
+fi
 exit $overall
