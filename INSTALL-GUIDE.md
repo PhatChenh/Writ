@@ -13,6 +13,8 @@ plugin source is installed once.
 | **macOS, Apple Silicon (arm64)** | Required. FalkorDB v4.14.6 publishes no Intel macOS module — bootstrap fails on `x86_64` by design. |
 | **Homebrew** | For `redis`. |
 | **redis-server** | `brew install redis` (bootstrap installs it if missing). |
+| **libomp** | `brew install libomp` — OpenMP runtime required by `vendor/falkordb.so`. Bootstrap does NOT auto-install; missing causes `Can't load module` abort. |
+| **openssl@3** | `brew install openssl@3` — `vendor/falkordb.so` links `libssl.3.dylib`/`libcrypto.3.dylib` from `/opt/homebrew/opt/openssl@3/lib`. Same abort if missing. |
 | **jq**, **curl** | Standard CLIs. |
 | **Python ≥ 3.11** | ⚠️ macOS CommandLineTools `python3` is often **3.9** — too old (helpers use `str | None` syntax). See the `WRIT_PYTHON` note below. |
 

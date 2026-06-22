@@ -22,7 +22,16 @@ except ModuleNotFoundError:
 DEFAULT_FALKORDB_PATH = ".writ/graph.db"
 DEFAULT_FALKORDB_GRAPH = "writ"
 DEFAULT_FALKORDB_MODULE = "vendor/falkordb.so"
-_HOMEBREW_ARM64_REDIS = "/opt/homebrew/opt/redis/bin/redis-server"
+_REDIS_SEARCH_PATHS = [
+    "/opt/homebrew/opt/redis/bin/redis-server",   # Homebrew arm64
+    "/usr/local/bin/redis-server",                 # Homebrew x86 / manual
+    "/opt/local/bin/redis-server",                 # MacPorts
+]
+# Scan Python framework bin dirs (Python.org installers drop redis-server here)
+import glob as _glob
+_REDIS_SEARCH_PATHS += _glob.glob(
+    "/Library/Frameworks/Python.framework/Versions/*/bin/redis-server"
+)
 DEFAULT_HNSW_CACHE_DIR = str(Path.home() / ".cache" / "writ" / "hnsw")
 
 # Default config file path: writ.toml in the package root (one level above writ/).
@@ -59,9 +68,19 @@ def get_falkordb_graph(path: str | None = None) -> str:
 
 
 def get_falkordb_module(path: str | None = None) -> str:
-    """Return falkordb.module from config, falling back to DEFAULT_FALKORDB_MODULE."""
+    """Return falkordb.module from config, falling back to DEFAULT_FALKORDB_MODULE.
+
+    A relative module path is resolved against the writ package root (where the
+    bundled vendor/falkordb.so ships), NOT the current working directory. The cwd
+    is the consuming project writ runs against (e.g. mkt_engine), which has no
+    vendor/falkordb.so — resolving there made Redis abort with "module failed to
+    load: server aborting".
+    """
     cfg = load_config(path)
-    return cfg.get("falkordb", {}).get("module", DEFAULT_FALKORDB_MODULE)
+    module = cfg.get("falkordb", {}).get("module", DEFAULT_FALKORDB_MODULE)
+    if not os.path.isabs(module):
+        module = str(_PACKAGE_ROOT / module)
+    return module
 
 
 def get_redis_bin(path: str | None = None) -> str:
@@ -80,11 +99,12 @@ def get_redis_bin(path: str | None = None) -> str:
     found = shutil.which("redis-server")
     if found:
         return found
-    if platform.machine() == "arm64":
-        return _HOMEBREW_ARM64_REDIS
+    for candidate in _REDIS_SEARCH_PATHS:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
     raise RuntimeError(
-        "redis-server not found on PATH and no writ.toml [falkordb] redis_bin override. "
-        f"x86_64 not supported (Apple-Silicon-only, D9). "
+        "redis-server not found on PATH or common install locations. "
+        "Install redis (brew install redis) or set [falkordb] redis_bin in writ.toml. "
         "Install redis: brew install redis"
     )
 

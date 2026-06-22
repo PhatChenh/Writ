@@ -12,7 +12,6 @@ log_level = "INFO"
 path = ".writ/graph.db"
 graph = "writ"
 module = "vendor/falkordb.so"
-redis_bin = "/opt/homebrew/opt/redis/bin/redis-server"
 
 [embedding]
 model = "all-MiniLM-L6-v2"

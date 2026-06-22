@@ -7,6 +7,7 @@ Graph queries only happen at startup (index warming) and in CLI/server backgroun
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -88,7 +89,7 @@ class FalkorDBLiteConnection:
         db_path: str,
         graph: str = "writ",
         module_path: str = "vendor/falkordb.so",
-        redis_bin: str = "/opt/homebrew/opt/redis/bin/redis-server",
+        redis_bin: str | None = None,
     ) -> None:
         from falkordb import FalkorDB
 
@@ -119,6 +120,13 @@ class FalkorDBLiteConnection:
                 f"loadmodule {abs_module}\n"
                 f"loglevel warning\n"
                 f"logfile {os.path.join(self._db_dir, 'redis.log')}\n"
+            )
+
+        # Resolve redis-server binary
+        if redis_bin is None:
+            redis_bin = (
+                shutil.which("redis-server")
+                or "/opt/homebrew/opt/redis/bin/redis-server"
             )
 
         # Start Redis subprocess
