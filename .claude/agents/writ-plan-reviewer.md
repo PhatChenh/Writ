@@ -1,6 +1,7 @@
 ---
 name: writ-plan-reviewer
 description: Reviews an implementation diff for compliance with the approved plan. Runs BEFORE code-quality review per the SDD review ordering. Reports structured findings per plan requirement.
+model: opus
 tools: Read Glob Grep Bash mcp__codegraph__codegraph_explore mcp__codegraph__codegraph_node
 ---
 

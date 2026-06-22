@@ -1,6 +1,7 @@
 ---
 name: writ-code-quality-reviewer
 description: Reviews an implementation diff for code quality. Runs AFTER plan-compliance review passes, per the SDD review ordering. Reports Critical/Important/Minor findings.
+model: opus
 tools: Read Glob Grep Bash mcp__codegraph__codegraph_explore mcp__codegraph__codegraph_node mcp__codegraph__codegraph_callers
 ---
 

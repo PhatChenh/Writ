@@ -1,6 +1,8 @@
 #!/bin/bash
 # Handoff markdown validation -- PostToolUse (advisory: exit 1 = warn, never blocks).
 #
+# Exit codes: 0=pass, 1=warning (advisory -- deliberate, never blocks the write).
+#
 # Fires after a write to the configured handoff dir (default
 # .claude/handoffs/*.md; resolved by bin/lib/artifact_paths.py + optional
 # .claude/writ.json). Checks our markdown /handoff doc carries its required
