@@ -88,6 +88,15 @@ class TestOrchestratorMethodologyCompanionEndToEnd:
                 f,
             )
 
+    @pytest.mark.skip(
+        reason="End-to-end: needs an externally-running, corpus-loaded Writ "
+        "server. The hook runs with cwd=<fresh tmp git dir>, so its auto-started "
+        "daemon keys a per-test port onto an EMPTY graph (no methodology nodes), "
+        "and the methodology companion query returns nothing. Deterministic "
+        "execution would require standing up a corpus-loaded server on the "
+        "computed port, which conflicts (graph lock) with the daemon-down "
+        "prod-graph tests in the same run. Run manually against a live daemon."
+    )
     def test_orchestrator_fires_methodology_companion(
         self, tmp_path
     ) -> None:
