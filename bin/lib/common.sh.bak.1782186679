@@ -89,62 +89,6 @@ is_work_mode() {
     [ "$mode" = "work" ]
 }
 
-# ── Stale embedded-server state cleanup (self-healing daemon restart) ─────────
-# A daemon reaped by Claude Code can leave a stale redis.sock pointing at a dead
-# listener. db.py startup does `if os.path.exists(socket)` and short-circuits
-# onto it -> ConnectionRefused -> the auto-start can never bind, so the daemon
-# stays down until the junk clears on its own (observed ~27min outage). Call
-# this RIGHT BEFORE spawning uvicorn in an auto-start path, AFTER /health has
-# already failed (daemon confirmed down) and INSIDE the per-port start-lock so
-# no concurrent legit starter races us.
-#
-# Safety: a *live, healthy* redis is left untouched (db.py reuses it). We only
-# remove a socket whose redis fails to PONG -- killing a healthy redis would
-# trigger a shutdown BGSAVE that can clobber graph.db (documented incident).
-# Usage: writ_clean_stale_embedded_state "$WRIT_REPO_ROOT"
-writ_clean_stale_embedded_state() {
-    local repo="${1:-${WRIT_REPO_ROOT:-}}"
-    [ -n "$repo" ] || return 0
-    local dbdir="$repo/.writ"
-    [ -d "$dbdir" ] || return 0
-
-    # Socket dir mirrors db.py: /tmp/writ-<md5(abspath(.writ))[:12]>/redis.sock
-    local h=""
-    if command -v md5 >/dev/null 2>&1; then
-        h=$(printf '%s' "$dbdir" | md5 | cut -c1-12)
-    elif command -v md5sum >/dev/null 2>&1; then
-        h=$(printf '%s' "$dbdir" | md5sum | cut -c1-12)
-    else
-        h=$(python3 -c 'import hashlib,sys;print(hashlib.md5(sys.argv[1].encode()).hexdigest()[:12])' "$dbdir" 2>/dev/null)
-    fi
-    [ -n "$h" ] || return 0
-    local sock="/tmp/writ-$h/redis.sock"
-
-    if command -v redis-cli >/dev/null 2>&1; then
-        # Healthy redis on the socket -> leave it; db.py reconnects.
-        if [ -S "$sock" ] && [ "$(redis-cli -s "$sock" ping 2>/dev/null)" = "PONG" ]; then
-            return 0
-        fi
-        # Unhealthy/absent: kill any orphan bound to this exact socket, drop the file.
-        pkill -f "redis-server unixsocket:$sock" 2>/dev/null || true
-        [ -e "$sock" ] && rm -f "$sock" 2>/dev/null
-    else
-        # No redis-cli: only remove a socket with no owning process (cannot
-        # distinguish hung-vs-healthy without a probe, so stay conservative).
-        if [ -e "$sock" ] && ! pgrep -f "redis-server unixsocket:$sock" >/dev/null 2>&1; then
-            rm -f "$sock" 2>/dev/null
-        fi
-    fi
-
-    # db.py already steals a dead-owner graph.lock, but clear it here too so the
-    # immediate restart never trips the single-writer guard on a stale PID.
-    local lock="$dbdir/graph.lock"
-    if [ -f "$lock" ]; then
-        local pid; pid=$(cat "$lock" 2>/dev/null)
-        { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; } || rm -f "$lock" 2>/dev/null
-    fi
-}
-
 # ── Project root detection ────────────────────────────────────────────────────
 # Walks up from a given path to find the project root by marker files.
 # Usage: PROJECT_ROOT=$(detect_project_root "/path/to/some/file.php")
@@ -392,17 +336,6 @@ else
     WRIT_PORT=$(( 8765 + _writ_port_hash % 1000 ))
 fi
 export WRIT_REPO_ROOT WRIT_PORT
-
-# ── Per-repo "current session" pointer ───────────────────────────────────────
-# The session id published each user turn (by writ-rag-inject) so Stop hooks,
-# mode-set, and the review-order gate can find the active session. This MUST be
-# per-repo: a single global /tmp/writ-current-session is clobbered when several
-# repos run Claude concurrently -- each repo's UserPromptSubmit writes the same
-# file, last-writer-wins, and every consumer then reads the WRONG repo's session
-# (gate denies, phase looks reset, mode-set targets the other repo). Keyed on the
-# per-repo WRIT_PORT, matching the D4-02 isolation model. (B1/B2a fix 2026-06-23.)
-WRIT_CURRENT_SESSION_FILE="/tmp/writ-current-session-${WRIT_PORT}"
-export WRIT_CURRENT_SESSION_FILE
 
 WRIT_SESSION_PORT="${WRIT_PORT:-8765}"
 WRIT_SESSION_HOST="${WRIT_HOST:-localhost}"

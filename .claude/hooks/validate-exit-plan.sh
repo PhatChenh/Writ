@@ -33,8 +33,8 @@ except Exception:
 
 # Fallback session ID
 if [ -z "$SESSION_ID" ]; then
-    if [ -f /tmp/writ-current-session ]; then
-        SESSION_ID=$(cat /tmp/writ-current-session 2>/dev/null | tr -d '[:space:]')
+    if [ -f "$WRIT_CURRENT_SESSION_FILE" ]; then
+        SESSION_ID=$(cat "$WRIT_CURRENT_SESSION_FILE" 2>/dev/null | tr -d '[:space:]')
     fi
 fi
 if [ -z "$SESSION_ID" ]; then

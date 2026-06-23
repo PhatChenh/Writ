@@ -44,8 +44,8 @@ fi
 
 # Read session ID
 SESSION_ID="${WRIT_SESSION_ID:-}"
-if [ -z "$SESSION_ID" ] && [ -f /tmp/writ-current-session ]; then
-    SESSION_ID=$(cat /tmp/writ-current-session 2>/dev/null | tr -d '[:space:]')
+if [ -z "$SESSION_ID" ] && [ -f "$WRIT_CURRENT_SESSION_FILE" ]; then
+    SESSION_ID=$(cat "$WRIT_CURRENT_SESSION_FILE" 2>/dev/null | tr -d '[:space:]')
 fi
 if [ -z "$SESSION_ID" ]; then
     exit 0

@@ -52,7 +52,7 @@ fi
 
 # Publish session ID as backup -- skip inside sub-agents
 if [ -z "$AGENT_ID" ]; then
-    echo "$SESSION_ID" > /tmp/writ-current-session
+    echo "$SESSION_ID" > "$WRIT_CURRENT_SESSION_FILE"
 fi
 
 # Check approval pattern

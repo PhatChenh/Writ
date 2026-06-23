@@ -216,6 +216,20 @@ def cmd_update(session_id: str, args: list[str]) -> None:
             ros[task_id] = entry
             cache["review_ordering_state"] = ros
             i += 2
+        elif args[i] == "--reset-plan-reviewed" and i + 1 < len(args):
+            # Re-arm the writ-sdd-review-order gate for a task: clears
+            # plan_reviewer_completed so the next code-quality dispatch again
+            # requires a fresh plan review. Pairs with --set-plan-reviewed.
+            # Lets a multi-task loop enforce ordering per task instead of
+            # one-shot (the gate keys all tasks on "default" when active_phase
+            # is unset). (B8 2026-06-23.)
+            task_id = args[i + 1]
+            ros = cache.get("review_ordering_state") or {}
+            entry = ros.get(task_id) or {}
+            entry["plan_reviewer_completed"] = False
+            ros[task_id] = entry
+            cache["review_ordering_state"] = ros
+            i += 2
         elif args[i] == "--inc-queries":
             cache["queries"] = cache.get("queries", 0) + 1
             i += 1
@@ -879,7 +893,15 @@ def _next_pending_gate(cache: dict) -> str | None:
 
 
 def _mode_set(session_id: str, mode: str, is_orchestrator: bool = False) -> None:
-    """Set mode with fresh state. Internal -- called by cmd_mode."""
+    """Set mode. On a real mode change, reset workflow state fresh.
+
+    Idempotent on a repeated set of the SAME mode: phase, gates, and paused
+    state are PRESERVED. Without this, a per-turn re-issue of `mode set work`
+    (the Writ mode nag emits one every turn) would wipe an in-progress
+    planning->testing->code advance back to `planning` and clear approved
+    gates. The reset is intended only when the mode actually changes.
+    (B2b fix 2026-06-23.)
+    """
     cache = _read_cache(session_id)
     old_mode = cache.get("mode")
     old_phase = cache.get("current_phase")
@@ -888,14 +910,19 @@ def _mode_set(session_id: str, mode: str, is_orchestrator: bool = False) -> None
     if is_orchestrator:
         cache["is_orchestrator"] = True
 
-    # Fresh workflow state
+    # Same mode re-set -> idempotent: keep phase/gates/paused state intact.
+    if old_mode == mode:
+        _write_cache(session_id, cache)
+        return
+
+    # Real mode change -> fresh workflow state
     new_phase = _initial_phase_for_mode(mode)
     cache["current_phase"] = new_phase
     cache["gates_approved"] = []
     cache["paused_work_state"] = None
     cache["denial_counts"] = {}
 
-    # Audit trail -- skip no-op transitions (e.g. repeated mode set work)
+    # Audit trail -- skip no-op transitions
     if old_phase != new_phase:
         cache.setdefault("phase_transitions", []).append({
             "from": old_phase,
@@ -1966,9 +1993,12 @@ def main() -> None:
 
     cmd = sys.argv[1]
 
-    if cmd == "read":
+    if cmd in ("read", "get"):
+        # `get` is an alias for `read` -- both dump the full session cache as
+        # JSON to stdout. (B7 2026-06-23: callers reached for `get` and hit
+        # "Unknown command"; `read` is the real verb.)
         if len(sys.argv) < 3:
-            print("Usage: writ-session.py read <session_id>", file=sys.stderr)
+            print(f"Usage: writ-session.py {cmd} <session_id>", file=sys.stderr)
             sys.exit(2)
         cmd_read(sys.argv[2])
 

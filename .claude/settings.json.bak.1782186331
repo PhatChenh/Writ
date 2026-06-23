@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $HOME/.codegraph-piggyback/codegraph_adoption/codegraph-gate.py",
+            "command": "python3 /Users/phatchenh/.codegraph-piggyback/codegraph_adoption/codegraph-gate.py",
             "timeout": 5
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 $HOME/.codegraph-piggyback/codegraph_adoption/codegraph-gate.py",
+            "command": "python3 /Users/phatchenh/.codegraph-piggyback/codegraph_adoption/codegraph-gate.py",
             "timeout": 5
           }
         ]

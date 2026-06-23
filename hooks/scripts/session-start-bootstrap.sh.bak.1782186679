@@ -108,8 +108,6 @@ if [ -f "$START_LOCK" ]; then
 fi
 if ( set -o noclobber; echo $$ > "$START_LOCK" ) 2>/dev/null; then
   trap 'rm -f "$START_LOCK"' EXIT
-  writ_clean_stale_embedded_state "$REPO"
-
   (
     cd "${REPO}" || exit 0
     # </dev/null is LOAD-BEARING (Claude Code #43123): inheriting the hook's stdin

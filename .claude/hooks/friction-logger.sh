@@ -23,8 +23,8 @@ source "$SKILL_DIR/bin/lib/common.sh"
 
 # Read session ID published by writ-rag-inject.sh (fires on every UserPromptSubmit)
 SESSION_ID=""
-if [ -f /tmp/writ-current-session ]; then
-    SESSION_ID=$(cat /tmp/writ-current-session 2>/dev/null | tr -d '[:space:]')
+if [ -f "$WRIT_CURRENT_SESSION_FILE" ]; then
+    SESSION_ID=$(cat "$WRIT_CURRENT_SESSION_FILE" 2>/dev/null | tr -d '[:space:]')
 fi
 if [ -z "$SESSION_ID" ]; then
     exit 0

@@ -38,24 +38,18 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/last-test-run.log"
 : > "$LOG"
 
-# Group test files by runner. Bash 4+ associative arrays.
-declare -A RUNNER_CMD RUNNER_CFG RUNNER_FILES RUNNER_FMT
+# Group test files by runner. macOS ships bash 3.2 (no `declare -A`), so we
+# accumulate KEY<TAB>testfile pairs in a temp file and re-derive CMD/CFG/FMT
+# from the KEY ("CMD|CFG") when running each group. (B14)
+PAIRS="$LOG_DIR/.runner-pairs.tmp"
+: > "$PAIRS"
 while IFS= read -r tf; do
     [ -z "$tf" ] && continue
     INFO=$(python3 "$TEST_PATHS_HELPER" runner-for "$tf" 2>/dev/null)
     CMD=$(echo "$INFO" | sed -n '1p')
     CFG=$(echo "$INFO" | sed -n '2p')
     [ -z "$CMD" ] && continue
-    KEY="${CMD}|${CFG}"
-    RUNNER_CMD["$KEY"]="$CMD"
-    RUNNER_CFG["$KEY"]="$CFG"
-    RUNNER_FILES["$KEY"]="${RUNNER_FILES["$KEY"]:-}${RUNNER_FILES["$KEY"]:+ }$tf"
-    case "$CMD" in
-        *pytest*)    RUNNER_FMT["$KEY"]=pytest  ;;
-        *phpunit*)   RUNNER_FMT["$KEY"]=phpunit ;;
-        *"go test"*) RUNNER_FMT["$KEY"]=gotest  ;;
-        *)           RUNNER_FMT["$KEY"]=pytest  ;;
-    esac
+    printf '%s|%s\t%s\n' "$CMD" "$CFG" "$tf" >> "$PAIRS"
 done <<< "$TEST_FILES"
 
 OVERALL_RC=0
@@ -79,18 +73,28 @@ run_group() {
     fi
 }
 
-for KEY in "${!RUNNER_CMD[@]}"; do
-    CMD="${RUNNER_CMD[$KEY]}"
-    CFG="${RUNNER_CFG[$KEY]}"
-    FILES="${RUNNER_FILES[$KEY]}"
-    FMT="${RUNNER_FMT[$KEY]}"
+# Unique KEYs ("CMD|CFG"); CMD has no '|', so split on the first one.
+KEYS=$(cut -d"$(printf '\t')" -f1 "$PAIRS" | awk 'NF && !seen[$0]++')
+while IFS= read -r KEY; do
+    [ -z "$KEY" ] && continue
+    CMD="${KEY%%|*}"
+    CFG="${KEY#*|}"
+    FILES=$(awk -F"$(printf '\t')" -v k="$KEY" '$1==k{printf "%s ", $2}' "$PAIRS")
+    FILES="${FILES% }"
+    case "$CMD" in
+        *pytest*)    FMT=pytest  ;;
+        *phpunit*)   FMT=phpunit ;;
+        *"go test"*) FMT=gotest  ;;
+        *)           FMT=pytest  ;;
+    esac
     if [ -n "$CFG" ]; then
         CMDLINE="$CMD -c $CFG $FILES"
     else
         CMDLINE="$CMD $FILES"
     fi
     run_group "$FMT" "$CMDLINE"
-done
+done <<< "$KEYS"
+rm -f "$PAIRS"
 
 log_friction_event "$SESSION_ID" "work" "hook_execution" \
     "{\"hook_name\":\"writ-run-pending-tests\",\"result_code\":$OVERALL_RC,\"resolved_count\":$RESOLVED_COUNT}" \

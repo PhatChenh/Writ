@@ -50,8 +50,8 @@ if [ -n "$PARENT_SESSION" ]; then
     PARENT_STATE=$(_writ_session read "$PARENT_SESSION" 2>/dev/null || echo '{}')
 else
     # Try the published session file
-    if [ -f /tmp/writ-current-session ]; then
-        PARENT_SESSION=$(cat /tmp/writ-current-session 2>/dev/null | tr -d '[:space:]')
+    if [ -f "$WRIT_CURRENT_SESSION_FILE" ]; then
+        PARENT_SESSION=$(cat "$WRIT_CURRENT_SESSION_FILE" 2>/dev/null | tr -d '[:space:]')
         PARENT_STATE=$(_writ_session read "$PARENT_SESSION" 2>/dev/null || echo '{}')
     else
         PARENT_STATE='{}'

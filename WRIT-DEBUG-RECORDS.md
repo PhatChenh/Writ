@@ -181,13 +181,107 @@ pkill -f 'redis-server unixsocket:/tmp/writ-<md5>' ; rm -f /tmp/writ-<md5>/redis
 
 ---
 
+### B9 — Reaped daemon leaves a stale socket -> every auto-restart fails to bind (~27min outage)
+- **Symptoms:** rag hook `[Writ: server unavailable, proceeding without rules]`; `<repo>/.writ/redis.log` ends `Received SIGTERM ... bye bye`; nothing listening on the per-repo port; rag-debug shows the hook FIRED (auto-start ran) seconds after the crash, yet no daemon ever came up; a later *clean* manual start works first try.
+- **Cause:** when Claude reaps the daemon (B4/B8 class), redis can leave a stale `/tmp/writ-<md5(.writ)>/redis.sock` with no live listener. db.py startup does `if os.path.exists(socket)` (`db.py:55`) and short-circuits onto the dead socket -> `ConnectionRefusedError` -> uvicorn never binds. The auto-start recovery only stole the *start-lock*, never the stale socket, so every restart re-hit the dead socket until the OS cleared it. (db.py already steals a dead-owner `graph.lock` at `db.py:71-84`, so the LOCK was not the blocker -- the SOCKET was.)
+- **Fix:** new `writ_clean_stale_embedded_state()` in `bin/lib/common.sh`, called inside BOTH auto-start paths (`hooks/scripts/session-start-bootstrap.sh`, `.claude/hooks/writ-rag-inject.sh`) right after `/health` fails and INSIDE the per-port start-lock, before spawning uvicorn. Removes a stale socket (only after `redis-cli ping` proves it is NOT a healthy redis) + a dead-owner `graph.lock`.
+- **Clobber-safety (critical):** a *healthy* redis (PONG) is left UNTOUCHED. Killing a healthy redis triggers a shutdown BGSAVE that can clobber `graph.db` to empty (the documented orphan-BGSAVE incident). Verified: stale socket+dead lock -> removed; live daemon (PONG, rule_count intact) -> untouched.
+
+### B10 — Hardcoded `/Users/<other-user>/...` hook path in COMMITTED settings.json blocks Read on a different machine
+- **Symptoms:** every Grep/Glob/Read errors `PreToolUse:Read hook error ... can't open file '/Users/phatchenh/.codegraph-piggyback/codegraph_adoption/codegraph-gate.py' ... No such file`. Read tool unusable for the whole session (Edit too -- it needs a prior Read).
+- **Cause:** `<repo>/.claude/settings.json` registers the codegraph-gate PreToolUse hook with an ABSOLUTE path baked in by `codegraph-piggyback/piggyback.py` `hook_command()` (`python3 {(ROOT/script).resolve()}`, `piggyback.py:91-97`; `ROOT = Path(__file__).resolve().parent`). Committed on one machine (`phatchenh`), the absolute path travels via git to another machine (`lap14806`) where it does not exist. "Many machines" = guaranteed breakage.
+- **Fix (immediate):** replaced `/Users/<user>/` -> `$HOME` in the committed settings (`Writ` + `mkt_engine` `.claude/settings.json` codegraph-gate; global `~/.claude/settings.json` caveman hooks + impact-analyzer line 51). The shell expands `$HOME` at hook-run time -> portable across machines/users. Left global `path: /Users/.../all-projects/Writ` (plugin-source root, genuinely absolute). JSON validated; gate runs exit 0.
+- **Caveat:** hook configs load at SESSION START -- the session that hit the broken hook keeps it until Claude restarts.
+- **Root-cause / install-script fix (SEPARATE REPO -- ✅ DONE 2026-06-23):** `codegraph-piggyback/piggyback.py` `hook_command()` wrote the resolved ABSOLUTE path; now emits a `$HOME`-relative token via new `_portable_path()` when the script lives under `Path.home()` (else absolute fallback). `is_owned()` updated to recognize BOTH the portable (`$HOME/<rel>`) and legacy-absolute forms, so old entries migrate on the next `piggyback update` without churn; cross-machine legacy abs (e.g. `/Users/phatchenh/...`) stays conservatively unowned (already hand-fixed). +2 portability tests (`test_piggyback.py` 17/17 green). Synced to BOTH clones (dev `~/all-projects/codegraph-piggyback` + canonical install `~/.codegraph-piggyback`); the installed tool now emits `python3 $HOME/.codegraph-piggyback/codegraph_adoption/codegraph-gate.py`, matching the manual settings fix. Durable propagation = commit+push from dev, `piggyback update` re-pulls.
+
+### B11 — Plugin agents never register (manifest missing the `agents` key)
+- **Symptoms:** in any repo OTHER than Writ, `writ-plan-reviewer` / `writ-code-quality-reviewer` (+ the other 4 writ agents) are absent from the agent-type list; `ls "$CLAUDE_PLUGIN_ROOT/agents/"` is empty. They appear ONLY inside the Writ repo.
+- **Cause:** `.claude-plugin/plugin.json` declared `commands` + `hooks` (non-default paths) but OMITTED `agents`. The 6 agent files live in `.claude/agents/` (non-default; the loader default is `agents/` at plugin root, which Writ does not have), so they never registered as PLUGIN agents. Inside the Writ repo they showed up only as PROJECT agents (Claude auto-loads `<cwd>/.claude/agents/`). caveman works because ITS agents sit in the default `agents/` dir.
+- **Fix:** added `"agents": [ "./.claude/agents/writ-*.md" x6 ]` to the manifest (schema confirms `agents` = string|array of `.md` paths relative to plugin root). Future `claude plugin install` reads the corrected manifest -> agents register in every repo. **Restart Claude to reload the manifest.** No bootstrap-script change (bootstrap copies the manifest, does not generate it).
+
+### B12 — Global `/tmp/writ-current-session` clobbered across concurrent repos (gate deny / phantom phase reset)
+- **Symptoms:** in a repo with a second Claude session open elsewhere: `writ-sdd-review-order` denies the code-quality reviewer even after `--set-plan-reviewed` "succeeded"; a phase advance (planning->testing) later reads back as `planning`; `/writ-approve` / mode-set act on the wrong session. Two session ids appear "live at once."
+- **Cause:** the "current session" pointer was a SINGLE global file `/tmp/writ-current-session`. Every repo's UserPromptSubmit (`writ-rag-inject`) writes it; with N concurrent repos it is last-writer-wins. Consumers (the SDD gate's writer skills, `writ-mode-set`, `enforce-violations`, `validate-exit-plan`, `friction-logger`, `track-failed-writes`, `writ-subagent-start`, `/writ-approve`) then read **another repo's** session id. The daemon/port/graph were already per-repo (D4-02); this pointer was the one remaining global. **Live proof:** the file held mkt_engine's `1a5e5f50` while the Writ session was `b6433218`.
+- **Fix (2026-06-23):** `common.sh` now exports `WRIT_CURRENT_SESSION_FILE=/tmp/writ-current-session-${WRIT_PORT}` (keyed on the per-repo port). All producers/consumers use it. Per-repo, so concurrent repos cannot clobber each other.
+- **Related, same session (codegraph-found):**
+  - **`_mode_set` reset every `mode set work`** (`writ-session.py:892-896`) — phase + gates were wiped on EVERY call, not just real mode changes; the per-turn mode nag re-emits `mode set work`, discarding mid-task advances. Now idempotent on an unchanged mode.
+  - **SDD-gate writer line in the two review skills used bare `python3` + `2>/dev/null || true`** — on macOS 3.9 the `writ-session.py` import crashes (no `from __future__ import annotations`; `str | None`) and the redirect swallowed it -> setter silently no-op'd -> gate denied forever. Now `source common.sh` (=> `$WRIT_PYTHON` wrapper + per-repo pointer) and surfaces the error.
+  - Gate `task_id` collapses to `"default"` (no `task_id` in the Task envelope; `active_phase` is set only by the test-only `/active-playbook` endpoint). Writer skills now pass the literal `default` to match; `--reset-plan-reviewed <task>` added to re-arm per task.
+- **Full diagnosis:** `docs/writ-bugs-2026-06-23.md`.
+
+---
+
+## Session block — 2026-06-23 (mkt_engine P0 build via `/subagent-driven-development`)
+
+Observed from the **running plugin cache** while driving an 11-phase P0 implementation
+(Phases 1–6 built) with the Writ two-stage reviewer agents. `Fix:` intentionally left
+EMPTY below for the next AI to handle. Two genuinely-new bugs (B13, B14) + two new minor
+diagnostics (B15, B16), then a re-observation table for bugs already logged above whose
+fixes did **not** take effect in the cache this session.
+
+### B13 — Writ TDD gate (`ENF-PROC-TDD-001`) is basename-strict, forcing test-file names
+- **Severity:** medium (ergonomics + collisions).
+- **Symptom:** writing `lib/<dir>/<X>.ts` is DENIED until `tests/<X>.test.ts` exists — the gate maps impl→test purely by file **basename**. Intent-named tests are rejected. Worse, when two seams' impl entrypoints are both `index.ts` (e.g. storage factory + analytics index + llm index), they all want `tests/index.test.ts` → collision; implementers fell back to generic names (`types.test.ts`, `s3.test.ts`, `noop.test.ts`) dictated by the gate, not by intent. Also forced an extra `tests/noop.test.ts` for `lib/analytics/sinks/noop.ts` beyond the plan's named test list.
+- **Evidence:** Phase 4/5/6 implementers each reported the gate rejecting their first-choice test filename; `lib/analytics/sinks/noop.ts` write blocked until `tests/noop.test.ts` was created.
+- **Affected:** the TDD gate that maps production→test (`ENF-PROC-TDD-001`; the `tests/**` matcher).
+- **Root cause:** basename-only mapping with no support for (a) intent-named tests, (b) directory-qualified mapping (`lib/a/index.ts` vs `lib/b/index.ts`), or (c) a single test file covering multiple small sibling modules.
+- **Fix (2026-06-23, `validate-test-file.sh`):** the gate now accepts a write on EITHER of two conditions (option "Both: mirror OR content-match"):
+  - **PASS A — directory-qualified mirror.** Candidate test paths are now mirrored under the impl's repo-relative subdir, not just basename: `lib/storage/index.ts` → `tests/storage/index.test.ts`, `lib/analytics/index.ts` → `tests/analytics/index.test.ts`. The two `index.ts` seams get DISTINCT candidates → the `tests/index.test.ts` collision is gone. (Bare-basename candidates kept too, for backward compat.)
+  - **PASS B — intent-named test references the impl.** Walks `tests/`,`test/`,`__tests__`,`spec/` for ANY file that (a) has assertion markers (`assert|expect|should|test_|it(|describe(`) AND (b) has an `import`/`from`/`require`/`use`/`include` line that names this impl. Lets a test be named for the behavior it covers (`tracks-events.spec.ts`) instead of the impl filename.
+  - **False-accept guard:** PASS B requires an actual import/require LINE naming the impl path (`lib[/.]storage[/.]index`), parent-qualified stem (`storage[/.]index`), or — only for a distinctive stem (len≥3, not in `{index,main,mod,init,app,lib,types,__init__}`) — the bare stem as a `\b`-bounded import token. A mere comment mention does NOT pass. Verified 7 cases (mirror-pass / collision-deny / intent-pass TS+Py / distinctive-stem-pass / comment-only-deny / no-test-deny). Synced to plugin cache.
+
+### B14 — `writ-run-pending-tests.sh:42` uses `declare -A` under macOS bash 3.2 → Stop hook crashes
+- **Severity:** medium (Stop-hook silently no-ops on macOS).
+- **Symptom:** on session Stop:
+  ```
+  /Users/lap14806/all-projects/Writ//.claude/hooks/writ-run-pending-tests.sh: line 42: declare: -A: invalid option
+  declare: usage: declare [-afFirtx] [-p] [name[=value] ...]
+  ```
+- **Evidence:** Stop-hook feedback, this session.
+- **Affected:** `/Users/lap14806/all-projects/Writ/.claude/hooks/writ-run-pending-tests.sh:42` (`declare -A`).
+- **Root cause:** `declare -A` (associative array) requires bash ≥4. macOS ships bash **3.2.57** (last GPLv2 bash); the hook's shebang resolves to `/bin/bash` (3.2). The "run pending tests on stop" hook therefore aborts at line 42 and never runs. (Note: the double slash `Writ//.claude` in the path is cosmetic, not the cause.)
+- **Fix (2026-06-23, `writ-run-pending-tests.sh`):** removed the 4 associative arrays. Test files are now grouped by runner via a temp `KEY<TAB>testfile` pairs file (`$LOG_DIR/.runner-pairs.tmp`), where `KEY="CMD|CFG"`. Unique KEYs come from `cut -f1 | awk '!seen'`; for each KEY, `CMD`/`CFG` are split back out with `${KEY%%|*}` / `${KEY#*|}` (CMD has no `|`), `FMT` re-derived from CMD via `case`, and `FILES` collected with `awk -F'\t' '$1==k'`. The `while … done <<< "$KEYS"` here-string runs in the current shell, so `OVERALL_RC`/`SUMMARY_FMT` mutations persist (same as the old `for` loop). Verified: `bash -n` clean under bash 3.2 + functional group test (two pytest files grouped together, phpunit separate). Synced to plugin cache.
+
+### B15 — `/tmp/writ-hook-debug.log` stays empty despite the hook's `tee` capture
+- **Severity:** low (diagnostics gap — made B1/B12 hard to diagnose).
+- **Symptom:** `writ-sdd-review-order.sh` does `exec 2> >(tee -a /tmp/writ-hook-debug.log >&2)` (comment claims "Phase 4c diagnostics"), but `/tmp/writ-hook-debug.log` was empty when the gate denied — so the SID the gate actually resolved could not be observed; had to import `_read_cache` manually to diagnose.
+- **Affected:** `/Users/lap14806/all-projects/Writ/.claude/hooks/writ-sdd-review-order.sh` (the `tee`/`exec 2>` capture).
+- **Root cause (suspected):** the Python deny-path writes nothing to stderr on a normal deny (it only `print()`s the deny JSON to stdout), so there is nothing for `tee` to capture; the diagnostic never records WHICH session id / task_id the gate read. No verbose/debug line on the allow/deny decision.
+- **Fix (already resolved by the B6/B12 work, verified 2026-06-23):** `writ-sdd-review-order.sh` now emits two UNCONDITIONAL stderr diagnostics — `[writ-sdd-review-order] resolved session_id=$SESSION_ID` (line 28, every work-mode invocation) and `[writ-sdd-review-order] task_id=… plan_reviewed=…` (Python, line 69, on every code-quality dispatch). The root cause ("nothing written to stderr") no longer holds, so the `tee -a /tmp/writ-hook-debug.log` capture now populates. Confirmed the `exec 2> >(tee -a … >&2)` pattern flushes the log on hook exit (isolated repro wrote both diag lines). No new code needed for B15.
+
+### B16 — `writ-session.py get <sid>` emits non-JSON (or `get` is not a subcommand)
+- **Severity:** low (inspection ergonomics).
+- **Symptom:** `python3 writ-session.py get "$SID"` piped to `json.load` failed `JSONDecodeError: Expecting value: line 1 column 1 (char 0)`. State inspection only worked by importing `_read_cache()` directly from the module.
+- **Affected:** `/Users/lap14806/all-projects/Writ/bin/lib/writ-session.py` (CLI subcommand surface).
+- **Root cause (suspected):** there is no `get` subcommand that prints the raw cache JSON (or it prints a human-formatted, non-JSON view). No documented way to dump `review_ordering_state`/phase for a session as machine-readable JSON.
+- **Fix (already resolved, verified 2026-06-23):** `writ-session.py` `main()` aliases `get` → `read` (`if cmd in ("read", "get")`, line ~1996), and `cmd_read` does `json.dump(cache, sys.stdout)` — raw machine-readable JSON. Verified: `writ-session.py get <sid>` round-trips through `json.load` ("VALID JSON"). Present in the plugin cache too. (Note `get`/`read` print the FULL cache; pipe to `python -c 'import json,sys; print(json.load(sys.stdin)["review_ordering_state"])'` to slice.) No new code needed for B16.
+
+### Re-observed this session — already logged above, but the fix was NOT effective in the running plugin cache
+
+These reproduced during the build even though their fixes are recorded above as applied
+**in the repo** (2026-06-23). Per the "Recurring fix checklist," repo edits do not take
+effect until copied into `~/.claude/plugins/cache/writ/writ/<ver>/` AND Claude restarts —
+so the actionable item is **verify the cache is synced**, not re-fix.
+
+| Re-observed symptom (this session) | Already logged as | Note |
+|---|---|---|
+| `--set-plan-reviewed default` "succeeded" yet `writ-sdd-review-order` kept denying the code-quality reviewer; only recording on BOTH live SIDs unblocked it | **B12** (global `/tmp/writ-current-session` clobber; bare-`python3` setter no-op) | fix in repo; cache appears stale — gate still read a different SID than the writer |
+| Phase advanced `planning→testing`, later read back `planning`; SID rotated `1a5e5f50`↔`5d7dd4b5` | **B12** (`_mode_set` reset + per-repo pointer) | re-occurred; verify cache sync + restart |
+| Gate `task_id` always `default`; no per-task ordering; had to hand-reset `review_ordering_state.default.plan_reviewer_completed=false` between phases | **B12** bullet (`task_id` collapses to `default`; `--reset-plan-reviewed` added) | `--reset-plan-reviewed` was NOT available in the cache this session (had to patch state via raw `_read_cache`/`_write_cache`) |
+| redis/daemon SIGTERM + restart mid-session, correlated with the phase/SID reset | **B4 / B9** (hook-reaped daemon, stale socket) | daemon lifecycle churn under Claude hooks |
+| Session-start hook injected `[Writ: server unavailable, proceeding without rules]` while the daemon was reachable seconds later | **B5 / B9** (false online/offline) | status line lagged real daemon state |
+
+**Bottom line for the next AI:** the highest-leverage action is to **sync the B12 fixes into the
+running plugin cache and restart Claude** (per the Recurring fix checklist) — that should clear
+the re-observed gate-deny / phase-reset / SID-mismatch class. B13–B16 are new and still need fixes.
+
 ## Recurring fix checklist (when you change any hook/script)
 
 1. Edit the file in the **repo**.
 2. `bash -n <file>` (and `ruff`/`mypy` if `.py`).
 3. **Sync to the cache** Claude runs:
    `cp <repo>/<path> ~/.claude/plugins/cache/writ/writ/<ver>/<path>` —
-   OR reinstall the plugin to re-copy everything.
+   OR reinstall the plugin to re-copy everything. **Also sync `.claude-plugin/plugin.json`** when you add/move agents/commands/hooks paths.
 4. **Restart Claude Code** so sessions reload hooks.
 5. Verify against the **cache** copy, not the repo (`grep` the cache file).
 

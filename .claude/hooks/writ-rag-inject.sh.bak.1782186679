@@ -49,8 +49,6 @@ if ! curl -sf --connect-timeout 0.2 "$WRIT_HEALTH_URL" >/dev/null 2>&1; then
     # Acquire lock (non-blocking; if another hook is already starting, wait for it)
     if ( set -o noclobber; echo $$ > "$WRIT_LOCKFILE" ) 2>/dev/null; then
         trap 'rm -f "$WRIT_LOCKFILE"' EXIT
-        writ_clean_stale_embedded_state "$WRIT_REPO_ROOT"
-
 
         # Start Writ server in background
         if [ -f "$VENV_DIR/bin/python3" ]; then
@@ -182,7 +180,7 @@ fi
 # Publish session ID so Stop hooks (friction-logger) can find it
 # Do NOT overwrite when inside a sub-agent -- protect parent's session file
 if [ -z "$AGENT_ID" ]; then
-    echo "$SESSION_ID" > "$WRIT_CURRENT_SESSION_FILE"
+    echo "$SESSION_ID" > /tmp/writ-current-session
 fi
 
 debug "session=$SESSION_ID prompt_len=${#PROMPT}"

@@ -21,6 +21,12 @@ PARSED=$(parse_hook_stdin)
 SESSION_ID=$(detect_session_id "$PARSED")
 [ -z "$SESSION_ID" ] && exit 0
 
+# B6 (2026-06-23): log the SID this gate actually resolved. The writer
+# (`--set-plan-reviewed`, run from the skill) must target this SAME id or the
+# gate reads an empty review_ordering_state and denies. Divergence here is the
+# B1 class of bug -- this line makes it visible in /tmp/writ-hook-debug.log.
+echo "[writ-sdd-review-order] resolved session_id=$SESSION_ID" >&2
+
 is_work_mode "$SESSION_ID" || exit 0
 
 # Pass $PARSED to Python via env var rather than heredoc substitution.
@@ -53,9 +59,15 @@ if "code-quality" not in agent_type and "code-review" not in agent_type:
     sys.exit(0)
 session = mod._read_cache("$SESSION_ID")
 state = session.get("review_ordering_state") or {}
-# Default task key if not specified: use the current active task id or 'default'
+# Task key: Task envelopes carry no task_id and active_phase is only set by the
+# (test-only) /active-playbook endpoint, so in practice this resolves to
+# "default" -- a SINGLE shared slot. The writer skills MUST pass the same
+# "default" key (B3 2026-06-23). For per-task ordering in a multi-task loop,
+# re-arm between tasks with `--reset-plan-reviewed default`.
 task_id = ti.get("task_id") or session.get("active_phase") or "default"
-if not state.get(task_id, {}).get("plan_reviewer_completed", False):
+completed = state.get(task_id, {}).get("plan_reviewer_completed", False)
+sys.stderr.write(f"[writ-sdd-review-order] task_id={task_id} plan_reviewed={completed}\n")
+if not completed:
     print(f"ENF-PROC-SDD-001: code-quality review dispatched before plan-compliance review completed for task '{task_id}'. Dispatch writ-plan-reviewer first, then record it: bin/lib/writ-session.py update <sid> --set-plan-reviewed '{task_id}'. Then dispatch writ-code-quality-reviewer.")
 PY
 )

@@ -49,25 +49,40 @@ if norm.startswith("tests/") or "/tests/" in norm or norm.startswith("test/") or
 # repo-relative path so /writ/ as an ancestor of the repo does not match.
 if not re.match(r"^(src|lib|app|writ)/", norm):
     sys.exit(0)
-# Derive plausible test paths. Convention: tests/test_X.{py} for src/X.py; specs, etc.
+
 base = os.path.basename(f)
 stem = os.path.splitext(base)[0]
-# Find repo root.
-repo = os.getcwd()
+parts = norm.split("/")
+subdir = "/".join(parts[1:-1])  # path between the top pkg dir and the file
+marker_re = re.compile(r"\b(assert|expect|should|test_|it\(|describe\()\w*")
+
+# --- B13: candidate test paths ---------------------------------------------
+# Backward-compatible basename candidates PLUS directory-qualified mirrors so
+# `lib/a/index.ts` and `lib/b/index.ts` map to DISTINCT test files (no more
+# `tests/index.test.ts` collision). `sub` injects the mirrored subdir.
+def _with_sub(rel_dir, *names):
+    out = []
+    for n in names:
+        out.append(f"tests/{n}")
+        if rel_dir:
+            out.append(f"tests/{rel_dir}/{n}")
+    return out
+
 candidates = []
 if ext == "py":
-    candidates += [f"tests/test_{stem}.py", f"tests/test_{stem}s.py"]
+    candidates += _with_sub(subdir, f"test_{stem}.py", f"test_{stem}s.py")
 elif ext in {"js", "ts"}:
-    candidates += [f"tests/{stem}.test.{ext}", f"tests/{stem}.spec.{ext}"]
+    candidates += _with_sub(subdir, f"{stem}.test.{ext}", f"{stem}.spec.{ext}")
 elif ext == "php":
-    candidates += [f"tests/Unit/{stem}Test.php", f"tests/{stem}Test.php"]
+    candidates += _with_sub(subdir, f"Unit/{stem}Test.php", f"{stem}Test.php")
 elif ext == "go":
-    candidates += [f.replace(".go", "_test.go")]
+    candidates += [f.replace(".go", "_test.go")]  # Go tests are colocated
 elif ext == "rs":
-    candidates += [f"tests/{stem}.rs"]
+    candidates += _with_sub(subdir, f"{stem}.rs")
 elif ext == "java":
     candidates += [f"src/test/java/{stem}Test.java"]
-marker_re = re.compile(r"\b(assert|expect|should|test_)\w*")
+
+# PASS A -- a mapped test file exists and carries assertion markers.
 for c in candidates:
     path = os.path.join(repo, c)
     if os.path.isfile(path):
@@ -77,8 +92,57 @@ for c in candidates:
                     sys.exit(0)
         except OSError:
             pass
-# No test file with assertions found.
-print(f"ENF-PROC-TDD-001: writing '{os.path.relpath(f, repo)}' requires a test file with assertions. Expected at one of: {', '.join(candidates)}. Bypass: set session.mode=prototype for throwaway work.")
+
+# PASS B (B13) -- intent-named test: ANY tests/ file that (a) has assertion
+# markers AND (b) imports/references THIS impl. Lets a test be named for the
+# behavior it covers instead of mirroring the impl filename. Kept strict (an
+# import/require line that names the impl path or a distinctive stem) so a
+# bare mention elsewhere does not false-accept.
+no_ext = os.path.splitext(norm)[0]            # e.g. lib/storage/index
+seg2 = "/".join(no_ext.split("/")[-2:])       # e.g. storage/index
+GENERIC = {"index", "main", "mod", "init", "app", "lib", "__init__", "types"}
+ref_pats = [re.escape(no_ext).replace("/", r"[/.]"),
+            re.escape(seg2).replace("/", r"[/.]")]
+if stem.lower() not in GENERIC and len(stem) >= 3:
+    ref_pats.append(r"\b" + re.escape(stem) + r"\b")
+ref_re = re.compile("|".join(ref_pats))
+import_re = re.compile(r"^\s*(import|from|export|const|let|var|require|use|include|require_once|@import)\b|require\(")
+
+def _references_impl(text):
+    if not marker_re.search(text):
+        return False
+    for line in text.splitlines():
+        if import_re.search(line) and ref_re.search(line):
+            return True
+    return False
+
+SKIP_DIRS = {".git", "node_modules", "vendor", ".venv", "__pycache__", "dist", "build"}
+found = False
+for tdir in ("tests", "test", "__tests__", "spec"):
+    root_dir = os.path.join(repo, tdir)
+    if not os.path.isdir(root_dir):
+        continue
+    for dpath, dnames, fnames in os.walk(root_dir):
+        dnames[:] = [d for d in dnames if d not in SKIP_DIRS]
+        for fn in fnames:
+            if os.path.splitext(fn)[1].lstrip(".") not in {"py", "js", "ts", "php", "go", "rs", "java"}:
+                continue
+            try:
+                with open(os.path.join(dpath, fn)) as fh:
+                    if _references_impl(fh.read()):
+                        found = True
+                        break
+            except OSError:
+                pass
+        if found:
+            break
+    if found:
+        break
+if found:
+    sys.exit(0)
+
+# No mapped test and no intent-named test references this impl.
+print(f"ENF-PROC-TDD-001: writing '{os.path.relpath(f, repo)}' requires a test with assertions. Either create a mapped test (one of: {', '.join(candidates)}) OR an intent-named test under tests/ that imports this module and asserts. Bypass: set session.mode=prototype for throwaway work.")
 PY
 )
 

@@ -51,10 +51,14 @@ It returns JSON `{"status": "compliant"|"issues", "issues": [...]}`.
 **3. Record plan-review completion** (unlocks the quality reviewer under the Work-mode gate):
 ```bash
 WR="${CLAUDE_PLUGIN_ROOT:-$(cat "${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/plugin-root" 2>/dev/null)}"
-SID=$(cat /tmp/writ-current-session 2>/dev/null)
-[ -n "$SID" ] && [ -n "$WR" ] && python3 "$WR/bin/lib/writ-session.py" update "$SID" --set-plan-reviewed "<task_id>" 2>/dev/null || true
+source "$WR/bin/lib/common.sh"   # per-repo $WRIT_CURRENT_SESSION_FILE + py>=3.11 python3 wrapper
+SID=$(cat "$WRIT_CURRENT_SESSION_FILE" 2>/dev/null)
+if [ -n "$SID" ]; then
+  python3 "$WR/bin/lib/writ-session.py" update "$SID" --set-plan-reviewed default \
+    || echo "writ: --set-plan-reviewed failed -- the review-order gate will deny the quality reviewer" >&2
+fi
 ```
-`<task_id>` = the phase/task name you are reviewing (matches the gate's task key; use `default` if your flow does not track one).
+Use the literal key `default`: the gate computes its task key as `default` (Task envelopes carry no task_id; `active_phase` is unset in this flow), so the writer must match it. **Do not** read the session id from the global `/tmp/writ-current-session` or call bare `python3` — `source common.sh` gives the per-repo pointer (so a second repo's concurrent session can't clobber it) and routes `python3` through a ≥3.11 interpreter (bare macOS `python3` is 3.9 and crashes importing `writ-session.py`).
 
 **4. Stage 3 — dispatch the code-quality reviewer** (Task tool, `subagent_type: writ-code-quality-reviewer`).
 

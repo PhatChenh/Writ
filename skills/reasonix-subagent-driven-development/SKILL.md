@@ -1,12 +1,14 @@
 ---
-name: subagent-driven-development
+name: reasonix-subagent-driven-development
 version: 1.1.0
-description: Use when executing implementation plans with independent tasks in the current session
+description: Use when executing implementation plans with independent tasks in the current session (Reasonix port — dispatches reasonix-* subagent skills via run_skill)
 ---
 
-# Subagent-Driven Development
+# Subagent-Driven Development (Reasonix)
 
-Execute plan by dispatching fresh subagent per task, with two-stage review after each: plan compliance review first, then code quality review.
+> **Reasonix port.** Reviewers/implementer are dispatched as **`runAs: subagent` skills via `run_skill`** (Reasonix has no `subagent_type`/`Task`-agent mechanism). Writ's enforcement hooks do **not** fire here — review ordering is guaranteed **by construction** (this skill dispatches plan-review before quality-review), not by a gate. The `writ-mode-set` / `--set-plan-reviewed` bash below is a harmless no-op on Reasonix; left in so the same skill still works under Claude Code.
+
+Execute plan by dispatching a fresh subagent skill per task, with two-stage review after each: plan compliance review first, then code quality review.
 
 **Why subagents:** You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
 
@@ -56,15 +58,15 @@ digraph process {
 
     subgraph cluster_per_task {
         label="Per Task";
-        "Dispatch implementer subagent (./implementer-prompt.md)" [shape=box];
+        "Dispatch reasonix-implementer skill (args per ./implementer-prompt.md)" [shape=box];
         "Implementer subagent asks questions?" [shape=diamond];
         "Answer questions, provide context" [shape=box];
         "Implementer subagent implements, tests, commits, self-reviews" [shape=box];
-        "Dispatch writ-plan-reviewer subagent" [shape=box];
+        "Dispatch reasonix-plan-reviewer skill" [shape=box];
         "Plan reviewer confirms code matches plan?" [shape=diamond];
         "Implementer subagent fixes plan gaps" [shape=box];
         "Record plan-review complete (--set-plan-reviewed)" [shape=box];
-        "Dispatch writ-code-quality-reviewer subagent" [shape=box];
+        "Dispatch reasonix-code-quality-reviewer skill" [shape=box];
         "Code quality reviewer approves?" [shape=diamond];
         "Implementer subagent fixes quality issues" [shape=box];
         "Mark task complete in TodoWrite" [shape=box];
@@ -72,38 +74,38 @@ digraph process {
 
     "Read plan, extract all tasks with full text, note context, create TodoWrite" [shape=box];
     "More tasks remain?" [shape=diamond];
-    "Dispatch writ-code-quality-reviewer for entire implementation" [shape=box];
+    "Dispatch reasonix-code-quality-reviewer for entire implementation" [shape=box];
     "Use finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Read plan, extract all tasks with full text, note context, create TodoWrite" -> "Dispatch implementer subagent (./implementer-prompt.md)";
-    "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer subagent asks questions?";
+    "Read plan, extract all tasks with full text, note context, create TodoWrite" -> "Dispatch reasonix-implementer skill (args per ./implementer-prompt.md)";
+    "Dispatch reasonix-implementer skill (args per ./implementer-prompt.md)" -> "Implementer subagent asks questions?";
     "Implementer subagent asks questions?" -> "Answer questions, provide context" [label="yes"];
-    "Answer questions, provide context" -> "Dispatch implementer subagent (./implementer-prompt.md)";
+    "Answer questions, provide context" -> "Dispatch reasonix-implementer skill (args per ./implementer-prompt.md)";
     "Implementer subagent asks questions?" -> "Implementer subagent implements, tests, commits, self-reviews" [label="no"];
-    "Implementer subagent implements, tests, commits, self-reviews" -> "Dispatch writ-plan-reviewer subagent";
-    "Dispatch writ-plan-reviewer subagent" -> "Plan reviewer confirms code matches plan?";
+    "Implementer subagent implements, tests, commits, self-reviews" -> "Dispatch reasonix-plan-reviewer skill";
+    "Dispatch reasonix-plan-reviewer skill" -> "Plan reviewer confirms code matches plan?";
     "Plan reviewer confirms code matches plan?" -> "Implementer subagent fixes plan gaps" [label="no"];
-    "Implementer subagent fixes plan gaps" -> "Dispatch writ-plan-reviewer subagent" [label="re-review"];
+    "Implementer subagent fixes plan gaps" -> "Dispatch reasonix-plan-reviewer skill" [label="re-review"];
     "Plan reviewer confirms code matches plan?" -> "Record plan-review complete (--set-plan-reviewed)" [label="yes"];
-    "Record plan-review complete (--set-plan-reviewed)" -> "Dispatch writ-code-quality-reviewer subagent";
-    "Dispatch writ-code-quality-reviewer subagent" -> "Code quality reviewer approves?";
+    "Record plan-review complete (--set-plan-reviewed)" -> "Dispatch reasonix-code-quality-reviewer skill";
+    "Dispatch reasonix-code-quality-reviewer skill" -> "Code quality reviewer approves?";
     "Code quality reviewer approves?" -> "Implementer subagent fixes quality issues" [label="no"];
-    "Implementer subagent fixes quality issues" -> "Dispatch writ-code-quality-reviewer subagent" [label="re-review"];
+    "Implementer subagent fixes quality issues" -> "Dispatch reasonix-code-quality-reviewer skill" [label="re-review"];
     "Code quality reviewer approves?" -> "Mark task complete in TodoWrite" [label="yes"];
     "Mark task complete in TodoWrite" -> "More tasks remain?";
-    "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
-    "More tasks remain?" -> "Dispatch writ-code-quality-reviewer for entire implementation" [label="no"];
-    "Dispatch writ-code-quality-reviewer for entire implementation" -> "Use finishing-a-development-branch";
+    "More tasks remain?" -> "Dispatch reasonix-implementer skill (args per ./implementer-prompt.md)" [label="yes"];
+    "More tasks remain?" -> "Dispatch reasonix-code-quality-reviewer for entire implementation" [label="no"];
+    "Dispatch reasonix-code-quality-reviewer for entire implementation" -> "Use finishing-a-development-branch";
 }
 ```
 
-> **Two-stage review = the writ reviewer agents** (single source of truth, shared with `/review-implementation`). Dispatch by `subagent_type`, not a hand-written prompt:
-> 1. **`writ-plan-reviewer`** — give it the task's full requirement text (or the plan path) + `base_sha`/`head_sha`. Returns `{status, issues[]}`. If `issues`, the implementer fixes and you re-dispatch until `compliant`.
-> 2. **Record completion** so the Work-mode `writ-sdd-review-order` gate permits the quality reviewer (it DENIES otherwise). The key is the literal `default` (matches the gate's computed task key); `source common.sh` for the per-repo session pointer + a py>=3.11 `python3` (bare macOS `python3`=3.9 crashes importing the helper). For a multi-task loop, re-arm before the next task's plan review with `... update "$SID" --reset-plan-reviewed default`:
+> **Two-stage review = the reasonix reviewer subagent skills** (single source of truth, shared with `/reasonix-review-implementation`). Dispatch each via `run_skill` with the bare skill name + an `arguments` string carrying everything the reviewer needs (it has no other context). Use `continue_from` (the `sa_...` ref from the prior result's "Subagent reference: ..." line) for re-review loops:
+> 1. **`reasonix-plan-reviewer`** — `run_skill({ name: "reasonix-plan-reviewer", arguments: "repo: <abs path from `pwd`>\nPlan: <path-or-full-text>\nbase_sha: <X>\nhead_sha: <Y>" })`. The subagent has no cwd context — always include the absolute `repo:` path. Returns `{status, issues[]}`. If `issues`, the implementer fixes and you re-dispatch (`continue_from` the prior reviewer run) until `compliant`.
+> 2. **Record completion (Claude Code only).** On Reasonix the `writ-sdd-review-order` gate does not fire, so this is a no-op; ordering holds because this skill dispatches plan-review before quality-review. Left in for Claude Code parity:
 >    ```bash
->    WR="${CLAUDE_PLUGIN_ROOT:-$(cat "${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/plugin-root" 2>/dev/null)}"; source "$WR/bin/lib/common.sh"; SID=$(cat "$WRIT_CURRENT_SESSION_FILE" 2>/dev/null); [ -n "$SID" ] && { python3 "$WR/bin/lib/writ-session.py" update "$SID" --set-plan-reviewed default || echo "writ: --set-plan-reviewed failed (gate will deny)" >&2; }
+>    WR="${CLAUDE_PLUGIN_ROOT:-$(cat "${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/plugin-root" 2>/dev/null)}"; source "$WR/bin/lib/common.sh" 2>/dev/null && SID=$(cat "$WRIT_CURRENT_SESSION_FILE" 2>/dev/null); [ -n "$SID" ] && python3 "$WR/bin/lib/writ-session.py" update "$SID" --set-plan-reviewed default 2>/dev/null || true
 >    ```
-> 3. **`writ-code-quality-reviewer`** — give it `base_sha`/`head_sha`. Returns `{status, critical/important/minor}`.
+> 3. **`reasonix-code-quality-reviewer`** — `run_skill({ name: "reasonix-code-quality-reviewer", arguments: "repo: <abs path from `pwd`>\nbase_sha: <X>\nhead_sha: <Y>" })`. Returns `{status, critical/important/minor}`.
 
 ## Model Selection
 
@@ -160,10 +162,10 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 
 **Never** ignore an escalation or force the same model to retry without changes. If the implementer said it's stuck, something needs to change.
 
-## Prompt Templates
+## Dispatch (Reasonix run_skill)
 
-- `./implementer-prompt.md` - Dispatch implementer subagent
-- **Reviewers** - dispatch the shared writ reviewer agents by `subagent_type` (NOT a hand-written prompt): `writ-plan-reviewer` then `writ-code-quality-reviewer`, defined at `.claude/agents/`. Same agents `/review-implementation` uses. See the two-stage review note above for the plan-review-completion recording step.
+- **Implementer** — `run_skill({ name: "reasonix-implementer", arguments: "repo: <abs path from \`pwd\`>\n<full task text + scene-setting context>" })`. Always include the absolute `repo:` path (the subagent has no cwd context). The implementer skill carries the persona; you supply the concrete task in `arguments` (do NOT make it read the plan file — paste what it needs). `./implementer-prompt.md` is kept as a checklist for what to put in `arguments`.
+- **Reviewers** — dispatch the reasonix reviewer subagent skills via `run_skill`: `reasonix-plan-reviewer` then `reasonix-code-quality-reviewer`. Same skills `/reasonix-review-implementation` uses. See the two-stage review note above for the exact `arguments` and the `continue_from` re-review loop.
 
 ## Example Workflow
 
@@ -289,7 +291,7 @@ Done!
 - **Start code quality review before plan compliance is ✅** (wrong order)
 - Move to next task while either review has open issues
 - Allow any subagent to write files outside the worktree
-- Instruct implementing subagents to follow TDD steps manually instead of invoking `/tdd-implement`
+- Instruct implementing subagents to follow TDD steps manually instead of invoking `/reasonix-tdd-implement`
 - Fix tests to make them pass (see Regression Handling Protocol for the sole exception)
 - Exceed 2 fix attempts on a regression without reflecting and reverting
 
@@ -313,10 +315,10 @@ Done!
 **Required workflow skills:**
 - **using-git-worktrees** - **Mandatory.** Always create a new worktree before any implementation begins. All subagents must operate exclusively within that worktree. Monitor each subagent to confirm no files are written outside the worktree boundary.
 - **writing-plans** - Creates the plan this skill executes
-- **review-implementation** - Two-stage review orchestrator (plan-compliance then code-quality); shares the same `writ-plan-reviewer` / `writ-code-quality-reviewer` agents this skill dispatches
+- **reasonix-review-implementation** - Two-stage review orchestrator (plan-compliance then code-quality); shares the same `reasonix-plan-reviewer` / `reasonix-code-quality-reviewer` subagent skills this skill dispatches
 - **finishing-a-development-branch** - Complete development after all tasks; includes merge to main
 
-**Implementing subagents MUST invoke the `/tdd-implement` skill** — not manually replicate TDD steps, not construct a custom prompt with RED/GREEN/VERIFY instructions. The subagent must call the skill itself. Manually writing TDD-style steps in the prompt is not equivalent and is a violation. This applies to all implementing agents including regression-fix dispatches.
+**Implementing subagents MUST invoke the `/reasonix-tdd-implement` skill** — not manually replicate TDD steps, not construct a custom prompt with RED/GREEN/VERIFY instructions. The subagent must call the skill itself. Manually writing TDD-style steps in the prompt is not equivalent and is a violation. This applies to all implementing agents including regression-fix dispatches.
 
 **After final review passes:** merge the worktree branch to main and clean up the worktree.
 

@@ -38,7 +38,7 @@ export SESSION_HELPER="$WRIT_DIR/bin/lib/writ-session.py"
 # common.sh derives the per-repo WRIT_PORT/WRIT_SESSION_BASE + defines _writ_session.
 source "$SCRIPT_DIR/lib/common.sh"
 
-SID_FILE="/tmp/writ-current-session"
+SID_FILE="$WRIT_CURRENT_SESSION_FILE"
 if [ ! -f "$SID_FILE" ]; then
     echo "writ-mode-set: no session id at $SID_FILE (has a user turn run yet?)" >&2
     exit 1
