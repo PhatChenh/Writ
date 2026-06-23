@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import typer
@@ -12,7 +13,10 @@ from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_modu
 
 DEFAULT_BIBLE_DIR = "bible/"
 DEFAULT_HOST = "localhost"
-DEFAULT_PORT = 8765
+# Honor the per-repo WRIT_PORT (derived in bin/lib/common.sh, D4-02 "A-auto")
+# so `writ serve` with no --port binds the same port the hooks query. An
+# explicit --port still wins; falls back to 8765 when WRIT_PORT is unset.
+DEFAULT_PORT = int(os.environ.get("WRIT_PORT", "8765"))
 
 app = typer.Typer(
     name="writ",

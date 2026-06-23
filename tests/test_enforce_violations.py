@@ -64,7 +64,7 @@ def _run_hook(
         env["WRIT_SESSION_ID"] = session_id
         env["WRIT_CACHE_DIR"] = tmpdir
         # Point server at a port nothing listens on so hooks fall back gracefully
-        env["WRIT_PORT"] = "19999"
+        env["WRIT_PORT_OVERRIDE"] = "19999"
         if env_overrides:
             env.update(env_overrides)
 

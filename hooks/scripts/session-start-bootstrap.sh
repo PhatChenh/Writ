@@ -92,12 +92,33 @@ fi
 
 # 6. Start the repo's daemon on its derived port. cd into the repo so the
 #    CWD-relative graph path resolves to "$REPO/.writ/graph.db".
-(
-  cd "${REPO}" || exit 0
-  nohup "${VENV_DIR}/bin/python3" -m uvicorn writ.server:app \
-    --host 0.0.0.0 --port "${WRIT_PORT}" >>"${WRIT_DATA}/server.log" 2>&1 &
-  disown 2>/dev/null || true
-) >/dev/null 2>&1 &
+#
+#    RACE GUARD: this hook and writ-rag-inject.sh both fire on session open and
+#    each try to start the daemon. Two simultaneous starts collide on db.py's
+#    single-writer graph.lock -- the loser dies with "graph DB is locked by PID
+#    N", and the winner sometimes dies too, leaving NO daemon. Both paths now
+#    coordinate through one per-port start-lock: whoever grabs it starts; the
+#    other just waits for /health below.
+START_LOCK="/tmp/writ-server-starting-${WRIT_PORT}.lock"
+# Steal a stale lock whose owner is gone (crash/SIGKILL left it behind), else a
+# dead starter would wedge auto-start for every later session.
+if [ -f "$START_LOCK" ]; then
+  _owner="$(cat "$START_LOCK" 2>/dev/null)"
+  { [ -n "$_owner" ] && kill -0 "$_owner" 2>/dev/null; } || rm -f "$START_LOCK"
+fi
+if ( set -o noclobber; echo $$ > "$START_LOCK" ) 2>/dev/null; then
+  trap 'rm -f "$START_LOCK"' EXIT
+  (
+    cd "${REPO}" || exit 0
+    # </dev/null is LOAD-BEARING (Claude Code #43123): inheriting the hook's stdin
+    # (Claude's stream-json pipe) blocks the hook return -> spawned tree SIGTERM'd.
+    nohup "${VENV_DIR}/bin/python3" -m uvicorn writ.server:app \
+      --host 0.0.0.0 --port "${WRIT_PORT}" </dev/null >>"${WRIT_DATA}/server.log" 2>&1 &
+    disown 2>/dev/null || true
+  ) >/dev/null 2>&1 &
+fi
+# If we did NOT get the lock, another starter (rag-inject) is bringing the daemon
+# up -- fall through to the health-wait below without spawning a second daemon.
 
 # Wait up to 5 seconds for the daemon to come up.
 for _ in 1 2 3 4 5; do

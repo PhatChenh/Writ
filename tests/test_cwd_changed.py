@@ -78,7 +78,7 @@ def _run_hook(cwd_dir: str, cache_dir: str, session_id: str = SESSION_ID) -> sub
     envelope = json.dumps({"cwd": cwd_dir, "session_id": session_id})
     env = os.environ.copy()
     env["WRIT_CACHE_DIR"] = cache_dir
-    env["WRIT_PORT"] = "19999"  # unreachable port to force subprocess fallback
+    env["WRIT_PORT_OVERRIDE"] = "19999"  # unreachable port to force subprocess fallback
     return subprocess.run(
         ["bash", HOOK_PATH],
         input=envelope,

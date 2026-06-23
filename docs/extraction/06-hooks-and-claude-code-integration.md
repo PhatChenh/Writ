@@ -419,7 +419,7 @@ Each analyzer emits JSON-per-line via `emit(line_no, rule, tool, message, severi
 - **Phase-scoped exclusion**: All RAG hooks read `loaded_rule_ids_by_phase[current_phase]`.
 - **v2 wiring vs v1 legacy**: `templates/settings.json` does NOT register `check-gate-approval.sh` or `enforce-final-gate.sh`. `writ-pre-write-dispatch.sh` consolidates them via `/pre-write-check`.
 - **Compaction recovery**: real signal is PostCompact hook → `reset-after-compaction`.
-- **Common library env vars**: `WRIT_HOST` (default localhost), `WRIT_PORT` (default 8765), `WRIT_CACHE_DIR`, `WRIT_HOOK_LOG`, `WRIT_DEBUG_LOG`, `WRIT_SESSION_ID`.
+- **Common library env vars**: `WRIT_HOST` (default localhost), `WRIT_PORT_OVERRIDE` (pins the port; else per-repo derived in `common.sh` as `8765 + cksum(repo_root) % 1000`, D4-02 — bare `WRIT_PORT` is ignored by common.sh, honored only by standalone stop/ensure-server scripts), `WRIT_CACHE_DIR`, `WRIT_HOOK_LOG`, `WRIT_DEBUG_LOG`, `WRIT_SESSION_ID`.
 - **Session ID derivation chain**: `agent_id || session_id (envelope) || PPID || md5(${PWD}:${USER})-DATE`.
 - **Mode set vs switch**: `mode set` resets phase/gates/state. `mode switch` saves and restores `paused_work_state`.
 - **Gate sequence**: only two gates in v2 — `phase-a` (post-plan-approval) and `test-skeletons` (post-test-approval).

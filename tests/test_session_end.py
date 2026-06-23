@@ -72,7 +72,7 @@ def _run_hook(
         env = os.environ.copy()
         env["WRIT_SESSION_ID"] = session_id
         env["WRIT_CACHE_DIR"] = tmpdir
-        env["WRIT_PORT"] = "19999"  # nothing listening; ensures local-only behavior
+        env["WRIT_PORT_OVERRIDE"] = "19999"  # nothing listening; ensures local-only behavior
         if env_overrides:
             env.update(env_overrides)
 

@@ -280,7 +280,7 @@ Errors come back as HTTP 200 with `{"error": "..."}` for logical failures, 422 f
 | `bin/lib/gate-categories.json` | File classification glob patterns plus framework detection. |
 | `writ/shared/budget.json` | Single source of truth for budget constants (default 8000, summary cost 40, standard 120, full 200, always_on_cap 5000). |
 
-Environment variables read by hooks: `WRIT_HOST` (default `localhost`), `WRIT_PORT` (default `8765`), `WRIT_CACHE_DIR` (default `tempfile.gettempdir()`), `WRIT_FRICTION_LOG`, `WRIT_HOOK_LOG`, `WRIT_DEBUG_LOG`. Neo4j credentials are read from `writ.toml` only; there is no `WRIT_NEO4J_*` override.
+Environment variables read by hooks: `WRIT_HOST` (default `localhost`), `WRIT_PORT_OVERRIDE` (pins the daemon port; otherwise the per-repo port is derived in `bin/lib/common.sh` as `8765 + cksum(repo_root) % 1000`, D4-02 "A-auto" — a bare `WRIT_PORT` is **not** honored by hooks, only by the standalone `scripts/stop-server.sh`/`ensure-server.sh`), `WRIT_CACHE_DIR` (default `tempfile.gettempdir()`), `WRIT_FRICTION_LOG`, `WRIT_HOOK_LOG`, `WRIT_DEBUG_LOG`. Neo4j credentials are read from `writ.toml` only; there is no `WRIT_NEO4J_*` override.
 
 ## Testing
 

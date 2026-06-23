@@ -44,7 +44,7 @@ the user skills (version-gated), and starts the daemon. **Idempotent** — safe 
 ```bash
 bash "$(claude plugin path writ)/scripts/bootstrap-plugin.sh"
 # or, from a checkout:
-bash scripts/bootstrap-plugin.sh
+bash scripts/bootstrap-plugin.sh 
 ```
 
 **If bootstrap reports `no python >= 3.11 found`** (your `python3` is 3.9 and `python3.12`/`3.11`
@@ -132,3 +132,47 @@ PATH="$HOME/.cache/writ/.venv/bin:$PATH" \
 
 - **`vendor/falkordb.so` permission error.** Needs the executable bit after a manual download:
   `chmod +x vendor/falkordb.so`.
+
+---
+
+## 6. Uninstall (and clean reinstall)
+
+To fully rip out the writ **plugin** install — daemons, plugin cache/registry, venv,
+ONNX model, sockets — run:
+
+```bash
+bash scripts/uninstall-plugin.sh            # full removal
+bash scripts/uninstall-plugin.sh --dry-run  # preview, change nothing
+bash scripts/uninstall-plugin.sh --keep-cache    # keep ~/.cache/writ (venv + ~90MB ONNX) for a fast reinstall
+bash scripts/uninstall-plugin.sh --purge-locks   # also rm stale .writ/graph.lock in repos that had a daemon
+```
+
+`--purge-locks` captures each running daemon's repo before killing it, then removes
+a leftover `.writ/graph.lock` there (graph.db untouched). A cleanly SIGTERM'd daemon
+releases its lock on its own, so this only matters after a crash / SIGKILL.
+
+**Removes:** running per-repo daemons + their redis, the plugin cache
+(`~/.claude/plugins/cache/writ`) and data dirs, registry entries
+(`~/.claude/settings.json` `enabledPlugins`/`extraKnownMarketplaces`, plus
+`installed_plugins.json` / `known_marketplaces.json` — each backed up first),
+the `~/.claude/skills/writ` **symlink**, `~/.cache/writ` (venv + ONNX + hnsw +
+logs), and `/tmp/writ-*` scratch.
+
+**Preserves by design (NOT removed):**
+- your shared user skills in `~/.claude/skills/*` (`grill`, `handoff`,
+  `build-pipeline`, … — bootstrap only copies/version-gates these; they are
+  treated as yours). Remove by hand if you truly want them gone.
+- each repo's `.writ/` graph data (per-project, gitignored, re-creatable).
+  Purge one with `rm -rf <repo>/.writ`.
+- `~/.claude/CLAUDE.md`.
+
+**Then restart Claude Code and reinstall:**
+
+```bash
+claude plugin marketplace add /Users/phatchenh/01_all_projects/falkor-writ
+claude plugin install writ@writ
+bash scripts/bootstrap-plugin.sh
+```
+
+> The `claude plugin` registry changes may need a Claude Code restart to fully
+> apply. The uninstall is idempotent — safe to re-run.

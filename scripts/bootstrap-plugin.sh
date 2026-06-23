@@ -38,6 +38,18 @@ WRIT_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}"
 VENV_DIR="${WRIT_DATA}/.venv"
 VENDOR_DIR="${WRIT_DIR}/vendor"
 
+# ── Per-repo port (D4-02 "A-auto") ──────────────────────────────────────────
+# MUST mirror bin/lib/common.sh: WRIT_PORT = 8765 + cksum(repo_root) % 1000,
+# repo_root = git toplevel of the plugin/repo dir. This keeps the daemon
+# bootstrap starts (cd "$WRIT_DIR" && writ serve) on the SAME port the hooks
+# query, instead of a hardcoded 8765 that never matched. Explicit env wins.
+if [ -z "${WRIT_PORT:-}" ]; then
+    WRIT_REPO_ROOT="$(git -C "$WRIT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$WRIT_DIR")"
+    _writ_port_hash=$(printf '%s' "$WRIT_REPO_ROOT" | cksum | cut -d' ' -f1)
+    WRIT_PORT=$(( 8765 + _writ_port_hash % 1000 ))
+fi
+export WRIT_PORT
+
 # ── Colors (ANSI, degrade gracefully on dumb terminals) ─────────────────────
 if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
     GREEN='\033[0;32m'
@@ -229,7 +241,7 @@ fi
 
 # ── 7. Start Writ daemon ───────────────────────────────────────────────────
 step "Starting Writ daemon"
-DAEMON_URL="http://localhost:8765/health"
+DAEMON_URL="http://localhost:${WRIT_PORT}/health"
 if curl -sf --connect-timeout 0.5 "$DAEMON_URL" >/dev/null 2>&1; then
     ok "writ serve already running"
 else
@@ -256,7 +268,7 @@ else
 fi
 
 # ── 8. Ready banner ────────────────────────────────────────────────────────
-RULE_COUNT=$(curl -sf "http://localhost:8765/stats" 2>/dev/null \
+RULE_COUNT=$(curl -sf "http://localhost:${WRIT_PORT}/stats" 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('rule_count','?'))" 2>/dev/null \
     || echo "?")
 
@@ -265,10 +277,10 @@ printf "${GREEN}${BOLD}  Writ plugin is ready${RESET}\n"
 printf "${GREEN}${BOLD}════════════════════════════════════════════${RESET}\n"
 printf "  Plugin root    : %s\n" "$WRIT_DIR"
 printf "  Venv           : %s\n" "$VENV_DIR"
-printf "  Writ daemon    : http://localhost:8765\n"
+printf "  Writ daemon    : http://localhost:%s\n" "$WRIT_PORT"
 printf "  Rules loaded   : %s\n" "$RULE_COUNT"
 printf "  Daemon log     : %s/server.log\n" "$WRIT_DATA"
 printf "\n"
-printf "  Verify         : curl http://localhost:8765/health\n"
+printf "  Verify         : curl http://localhost:%s/health\n" "$WRIT_PORT"
 printf "\n"
 printf "${YELLOW}!${RESET} Restart Claude Code for the hooks to take effect.\n"

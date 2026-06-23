@@ -294,15 +294,44 @@ while path != '/':
 # ── D4-02 "A-auto": per-repo daemon isolation ────────────────────────────────
 # Every hook sources this file, so deriving the per-repo port HERE makes all
 # hooks (and the _writ_session helpers below) agree on one port without
-# per-hook edits. An explicit WRIT_PORT env var always wins. Repo root = git
-# toplevel of the hook's CWD (Claude runs hooks at the project root); falls
+# per-hook edits. An explicit WRIT_PORT_OVERRIDE pins the port (see below).
+# Repo root = git toplevel of the hook's CWD (Claude runs hooks at the project
+# root); falls
 # back to the install dir so non-git CWDs share a single "global" daemon.
 # cksum is used (not python) to keep this off-the-hot-path cheap.
+#
+# Port override: WRIT_PORT is ALWAYS derived from WRIT_REPO_ROOT below -- a bare
+# inherited WRIT_PORT is deliberately NOT honored. A stale WRIT_PORT leaked into
+# the shell/Claude env (decoupled from the repo root) is what put a daemon on the
+# wrong port while it opened a different repo's graph.db (orphan-on-wrong-port).
+# To pin a port intentionally (tests, manual multi-daemon), set WRIT_PORT_OVERRIDE
+# -- the single explicit escape hatch, which cannot drift because it is opt-in.
 if [ -z "${WRIT_REPO_ROOT:-}" ]; then
     WRIT_REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    # git can fail when a hook fires from a non-git CWD. Before resorting to the
+    # skill dir (which yields a DIFFERENT port for the same project -> orphan
+    # daemon on the wrong port), walk up from PWD to find the project root that
+    # actually holds .writ/ or .git/. Keeps the port stable per-repo (D4-02).
+    if [ -z "$WRIT_REPO_ROOT" ]; then
+        _wd="$PWD"
+        while [ "$_wd" != "/" ] && [ -n "$_wd" ]; do
+            if [ -d "$_wd/.writ" ] || [ -d "$_wd/.git" ]; then
+                WRIT_REPO_ROOT="$_wd"
+                break
+            fi
+            _wd=$(dirname "$_wd")
+        done
+    fi
     [ -z "$WRIT_REPO_ROOT" ] && WRIT_REPO_ROOT="${WRIT_DIR:-${SKILL_DIR:-$PWD}}"
 fi
-if [ -z "${WRIT_PORT:-}" ]; then
+# Normalize: a trailing slash must NOT change the derived port. The SessionStart
+# envelope cwd can arrive with a trailing slash, which made the daemon bind a
+# different port (cksum(".../writ/") != cksum(".../writ")) than the rag hook
+# queried -> daemon on the wrong port. Strip it so every caller agrees.
+[ "$WRIT_REPO_ROOT" != "/" ] && WRIT_REPO_ROOT="${WRIT_REPO_ROOT%/}"
+if [ -n "${WRIT_PORT_OVERRIDE:-}" ]; then
+    WRIT_PORT="$WRIT_PORT_OVERRIDE"
+else
     _writ_port_hash=$(printf '%s' "$WRIT_REPO_ROOT" | cksum | cut -d' ' -f1)
     WRIT_PORT=$(( 8765 + _writ_port_hash % 1000 ))
 fi

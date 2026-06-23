@@ -61,7 +61,7 @@ def _run_hook(
         env = os.environ.copy()
         env["WRIT_SESSION_ID"] = session_id
         env["WRIT_CACHE_DIR"] = tmp
-        env["WRIT_PORT"] = "19999"  # No server listening
+        env["WRIT_PORT_OVERRIDE"] = "19999"  # No server listening
 
         result = subprocess.run(
             ["bash", HOOK_PATH],
@@ -306,7 +306,7 @@ class TestTrackFailedWritesFrictionLog:
             env = os.environ.copy()
             env["WRIT_SESSION_ID"] = session_id
             env["WRIT_CACHE_DIR"] = tmp
-            env["WRIT_PORT"] = "19999"
+            env["WRIT_PORT_OVERRIDE"] = "19999"
 
             stdin = _build_hook_stdin("Write", "/src/app.py", "gate denied")
             subprocess.run(

@@ -40,6 +40,12 @@ debug "repo_root=$WRIT_REPO_ROOT port=$WRIT_PORT"
 # Uses a lockfile to prevent multiple hooks from racing to start the server.
 if ! curl -sf --connect-timeout 0.2 "$WRIT_HEALTH_URL" >/dev/null 2>&1; then
     debug "server down, attempting auto-start"
+    # Steal a stale start-lock whose owner is gone (crash/SIGKILL), else a dead
+    # starter wedges auto-start forever. Shared lock path with session-start-bootstrap.sh.
+    if [ -f "$WRIT_LOCKFILE" ]; then
+        _owner="$(cat "$WRIT_LOCKFILE" 2>/dev/null)"
+        { [ -n "$_owner" ] && kill -0 "$_owner" 2>/dev/null; } || rm -f "$WRIT_LOCKFILE"
+    fi
     # Acquire lock (non-blocking; if another hook is already starting, wait for it)
     if ( set -o noclobber; echo $$ > "$WRIT_LOCKFILE" ) 2>/dev/null; then
         trap 'rm -f "$WRIT_LOCKFILE"' EXIT
@@ -51,7 +57,12 @@ if ! curl -sf --connect-timeout 0.2 "$WRIT_HEALTH_URL" >/dev/null 2>&1; then
                 # package imports from the venv regardless of CWD; only the graph
                 # path is CWD-relative.
                 cd "$WRIT_REPO_ROOT"
-                nohup "$VENV_DIR/bin/python3" -m uvicorn writ.server:app --host 0.0.0.0 --port "$WRIT_PORT" >>/tmp/writ-server.log 2>&1 &
+                # </dev/null is LOAD-BEARING: the daemon must NOT inherit the
+                # hook's stdin (Claude's stream-json pipe). Holding it open blocks
+                # the hook's return -> Claude's timeout/cleanup SIGTERMs the whole
+                # spawned tree (Claude Code issue #43123). disown detaches the job.
+                nohup "$VENV_DIR/bin/python3" -m uvicorn writ.server:app --host 0.0.0.0 --port "$WRIT_PORT" </dev/null >>/tmp/writ-server.log 2>&1 &
+                disown 2>/dev/null || true
             )
             # Wait up to 5s for Writ health endpoint
             for _i in $(seq 1 10); do
@@ -210,7 +221,7 @@ if [ "$IS_ORCHESTRATOR" = "true" ]; then
 [Writ: set mode before proceeding]
 Conversation: discussion, no code. Debug: investigating a problem, no code.
 Review: evaluating code against rules, no code. Work: building/modifying code (full workflow).
-Declare: python3 $SESSION_HELPER mode set <conversation|debug|review|work> $SESSION_ID
+Declare: $WRIT_PYTHON $SESSION_HELPER mode set <conversation|debug|review|work> $SESSION_ID
 Full definitions: see HANDBOOK.md "Mode system" section.
 MODE_DIRECTIVE
     fi
@@ -575,7 +586,7 @@ if [ -z "$CURRENT_MODE" ]; then
 [Writ: set mode before proceeding]
 Conversation: discussion, no code. Debug: investigating a problem, no code.
 Review: evaluating code against rules, no code. Work: building/modifying code (full workflow).
-Declare: python3 $SESSION_HELPER mode set <conversation|debug|review|work> $SESSION_ID
+Declare: $WRIT_PYTHON $SESSION_HELPER mode set <conversation|debug|review|work> $SESSION_ID
 Full definitions: see HANDBOOK.md "Mode system" section.
 MODE_DIRECTIVE
     debug "injected mode classification directive"

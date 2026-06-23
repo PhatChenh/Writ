@@ -40,7 +40,7 @@ def _stub_env(
     env["WRIT_SESSION_ID"] = session_id
     env["WRIT_MODE"] = mode
     # Point server at a port nothing listens on so hooks fall back gracefully
-    env["WRIT_PORT"] = "19999"
+    env["WRIT_PORT_OVERRIDE"] = "19999"
     if extra:
         env.update(extra)
     return env
