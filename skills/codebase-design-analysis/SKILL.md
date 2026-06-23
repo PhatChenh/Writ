@@ -320,7 +320,7 @@ Do not write any file until the user selects A or B. If C, output the doc as mar
 
 **Next step** (output after writing the doc):
 
-"Design doc written. Run `/architecture-docs` to update the main architecture designs, and then run `/writing-detailed-specs` to structure the chosen option into build steps."
+"Design doc written. Run `/writing-detailed-specs` to structure the chosen option into build steps."
 
 
 ---

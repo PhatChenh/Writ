@@ -203,41 +203,14 @@ else
     warn "ingestion reported errors; daemon will serve whatever made it into the graph"
 fi
 
-# ── 6b. Install user skills (version-aware) ─────────────────────────────────
-# Skills live in ${WRIT_DIR}/skills/ as the source of truth. They install as
-# plain (non-namespaced) skills at ~/.claude/skills/<name> so they keep bare
-# names (/grill, not /writ:grill). Per-skill version gate:
-#   not installed        -> install
-#   writ version newer   -> overwrite (upgrade)
-#   same / older / unset -> leave untouched (respects local edits)
-step "Installing user skills (version-aware)"
-SKILLS_SRC="${WRIT_DIR}/skills"
-SKILLS_DEST="${WRIT_SKILLS_DIR:-$HOME/.claude/skills}"
-skill_version() { awk -F': *' '/^version:/{gsub(/["[:space:]]/,"",$2); print $2; exit}' "$1" 2>/dev/null; }
-ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
-if [ -d "$SKILLS_SRC" ]; then
-    mkdir -p "$SKILLS_DEST"
-    for sdir in "$SKILLS_SRC"/*/; do
-        [ -f "${sdir}SKILL.md" ] || continue
-        name="$(basename "$sdir")"
-        dest="${SKILLS_DEST}/${name}"
-        srcv="$(skill_version "${sdir}SKILL.md")"
-        if [ ! -f "${dest}/SKILL.md" ]; then
-            mkdir -p "$dest"; cp -R "${sdir}." "$dest/"
-            ok "skill ${name} installed (${srcv:-unversioned})"
-        else
-            destv="$(skill_version "${dest}/SKILL.md")"
-            if ver_gt "${srcv:-0}" "${destv:-0}"; then
-                cp -R "${sdir}." "$dest/"
-                ok "skill ${name} upgraded (${destv:-0} -> ${srcv})"
-            else
-                ok "skill ${name} up-to-date (${destv:-0} >= ${srcv:-0}); left untouched"
-            fi
-        fi
-    done
-else
-    warn "no skills/ dir at $SKILLS_SRC; skipping skill install"
-fi
+# ── 6b. User skills — delegated to deploy.py (NOT copied here) ───────────────
+# Skill install is owned by the unified symlinker: skill_library/tools/deploy.py.
+# It symlinks BOTH personal and Writ skills into ~/.claude/skills from their git
+# sources, so edits land in git and `git pull` is the only cross-machine transport.
+# Bootstrap must NOT copy skills here — a copy would clobber those symlinks and
+# reintroduce the drift this design removes. Run deploy.py after cloning/pulling.
+step "User skills (delegated to deploy.py — not copied)"
+ok "skill install delegated to deploy.py (skill_library/tools/deploy.py); bootstrap skips copy"
 
 # ── 7. Start Writ daemon ───────────────────────────────────────────────────
 step "Starting Writ daemon"

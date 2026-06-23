@@ -337,7 +337,6 @@ Invoke `/update-project-docs` (session-end sweep). It is the single post-phase d
 - **roadmap.md** — if phase scope changed (skip otherwise)
 - **guardrail-check** — any new constraints, tech debt, or open questions
 - **`/update-behavior-guide`** — Reconcile + regenerate behavior inventory and testing guide
-- **`/update-arch-story`** — update architecture diagrams if architecture changed
 
 `/update-project-docs` has its own proposal/approval gate — proceed through it normally.
 
