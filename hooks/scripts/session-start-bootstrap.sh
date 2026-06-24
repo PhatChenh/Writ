@@ -110,14 +110,10 @@ if ( set -o noclobber; echo $$ > "$START_LOCK" ) 2>/dev/null; then
   trap 'rm -f "$START_LOCK"' EXIT
   writ_clean_stale_embedded_state "$REPO"
 
-  (
-    cd "${REPO}" || exit 0
-    # </dev/null is LOAD-BEARING (Claude Code #43123): inheriting the hook's stdin
-    # (Claude's stream-json pipe) blocks the hook return -> spawned tree SIGTERM'd.
-    nohup "${VENV_DIR}/bin/python3" -m uvicorn writ.server:app \
-      --host 0.0.0.0 --port "${WRIT_PORT}" </dev/null >>"${WRIT_DATA}/server.log" 2>&1 &
-    disown 2>/dev/null || true
-  ) >/dev/null 2>&1 &
+  # Detached in a new session (os.setsid) so Claude's process-tree SIGTERM
+  # (#43123) cannot reap it; macOS lacks `setsid`, and bare nohup+disown left
+  # the daemon in the hook's session. repo-root CWD keeps .writ/graph.db per-repo.
+  writ_spawn_daemon_detached "${VENV_DIR}/bin/python3" "${WRIT_PORT}" "${WRIT_DATA}/server.log" "${REPO}"
 fi
 # If we did NOT get the lock, another starter (rag-inject) is bringing the daemon
 # up -- fall through to the health-wait below without spawning a second daemon.

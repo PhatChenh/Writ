@@ -52,20 +52,12 @@ if ! curl -sf --connect-timeout 0.2 "$WRIT_HEALTH_URL" >/dev/null 2>&1; then
         writ_clean_stale_embedded_state "$WRIT_REPO_ROOT"
 
 
-        # Start Writ server in background
+        # Start Writ server in background. Detached in a new session (os.setsid)
+        # so Claude's process-tree SIGTERM (#43123) cannot reap it; macOS lacks
+        # `setsid`, and bare nohup+disown left the daemon in the hook's session.
+        # D4-02: repo-root CWD makes .writ/graph.db per-repo.
         if [ -f "$VENV_DIR/bin/python3" ]; then
-            (
-                # D4-02: CWD = repo root so .writ/graph.db is per-repo. The writ
-                # package imports from the venv regardless of CWD; only the graph
-                # path is CWD-relative.
-                cd "$WRIT_REPO_ROOT"
-                # </dev/null is LOAD-BEARING: the daemon must NOT inherit the
-                # hook's stdin (Claude's stream-json pipe). Holding it open blocks
-                # the hook's return -> Claude's timeout/cleanup SIGTERMs the whole
-                # spawned tree (Claude Code issue #43123). disown detaches the job.
-                nohup "$VENV_DIR/bin/python3" -m uvicorn writ.server:app --host 0.0.0.0 --port "$WRIT_PORT" </dev/null >>/tmp/writ-server.log 2>&1 &
-                disown 2>/dev/null || true
-            )
+            writ_spawn_daemon_detached "$VENV_DIR/bin/python3" "$WRIT_PORT" /tmp/writ-server.log "$WRIT_REPO_ROOT"
             # Wait up to 5s for Writ health endpoint
             for _i in $(seq 1 10); do
                 if curl -sf --connect-timeout 0.2 "$WRIT_HEALTH_URL" >/dev/null 2>&1; then

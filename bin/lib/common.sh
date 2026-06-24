@@ -145,6 +145,31 @@ writ_clean_stale_embedded_state() {
     fi
 }
 
+# ── Detached daemon launch ────────────────────────────────────────────────────
+# Spawn the uvicorn daemon in a NEW SESSION (os.setsid) so Claude's process-tree
+# SIGTERM (Claude Code issue #43123) cannot reach it. `nohup ... & disown` only
+# detaches job control -- the daemon stays in the hook's session and is reaped;
+# macOS has no `setsid` to fix that from shell. A python double-fork + os.setsid
+# is portable (macOS + Linux) and yields a PPID=1, TTY-less daemon that survives.
+# Usage: writ_spawn_daemon_detached <python_bin> <port> <logfile> <repo_cwd>
+writ_spawn_daemon_detached() {
+    local py="$1" port="$2" log="$3" repo="$4"
+    nohup "$py" -c '
+import os, sys
+port, log, repo = sys.argv[1], sys.argv[2], sys.argv[3]
+if os.fork() > 0: os._exit(0)            # parent returns to the hook immediately
+os.setsid()                              # new session -> detach from Claude
+if os.fork() > 0: os._exit(0)            # not a session leader -> never reacquires a TTY
+if repo: os.chdir(repo)                  # .writ/graph.db resolves per-repo (D4-02)
+fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+os.dup2(fd, 1); os.dup2(fd, 2)
+os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+os.execv(sys.executable, [sys.executable, "-m", "uvicorn", "writ.server:app",
+                          "--host", "127.0.0.1", "--port", port])
+' "$port" "$log" "$repo" </dev/null >>"$log" 2>&1 &
+    disown 2>/dev/null || true
+}
+
 # ── Project root detection ────────────────────────────────────────────────────
 # Walks up from a given path to find the project root by marker files.
 # Usage: PROJECT_ROOT=$(detect_project_root "/path/to/some/file.php")

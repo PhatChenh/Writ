@@ -47,12 +47,10 @@ stop_daemon() {
 
 start_daemon() {
     [ -x "$VENV_DIR/bin/python3" ] || return 0
-    ( cd "$WRIT_REPO_ROOT"
-      # </dev/null: do NOT inherit the caller's stdin, else a hook-context caller
-      # blocks Claude's return and the daemon is SIGTERM'd (Claude Code #43123).
-      nohup "$VENV_DIR/bin/python3" -m uvicorn writ.server:app \
-        --host 0.0.0.0 --port "$WRIT_PORT" </dev/null >>/tmp/writ-server.log 2>&1 &
-      disown 2>/dev/null || true )
+    # Detached in a new session (os.setsid): a hook-context caller would otherwise
+    # have the daemon reaped by Claude's process-tree SIGTERM (#43123); macOS lacks
+    # `setsid`. repo-root CWD keeps .writ/graph.db per-repo.
+    writ_spawn_daemon_detached "$VENV_DIR/bin/python3" "$WRIT_PORT" /tmp/writ-server.log "$WRIT_REPO_ROOT"
     for _i in $(seq 1 20); do daemon_up && break; sleep 0.5; done
 }
 
