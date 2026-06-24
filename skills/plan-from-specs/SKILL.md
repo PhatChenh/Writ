@@ -231,7 +231,7 @@ For each `# COMMENT:` that suggests a design change:
 3. If it contradicts a prior architecture decision in `STATE.md`, do not silently adopt it — call `AskUserQuestion` with:
 
 ```
-⚠️ Conflict: Your comment on Phase 2 suggests [X], but STATE.md
+⚠️ Conflict: Your comment on Step 2 suggests [X], but STATE.md
 records an architecture decision for [Y] (decided on <date>).
 ```
 
@@ -294,7 +294,7 @@ _Status: [ ] pending_
 
 ## Analysis
 
-[Plain-English: what the build adds, how it connects to existing components, and why it's built this way. The remaining gate sections (## Files, ## Rules Applied, ## Capabilities, ## Phases, ## Open Questions, ## Out of Scope) are written in Step 4.]
+[Plain-English: what the build adds, how it connects to existing components, and why it's built this way. The remaining gate sections (## Files, ## Delegation Authority, ## Rules Applied, ## Capabilities, ## Implementation Order, ## Steps, ## E2E Done Criteria, ## Open Questions, ## Out of Scope) are written in Step 4.]
 ```
 
 Then proceed directly to Step 4 and write the complete plan. Do NOT stop to present the architecture, do NOT call `AskUserQuestion`, do NOT wait for approval — it is already written to the file. The dispatching orchestrator reviews it in the main thread after you return; an interactive human (if any) reviews it there, not here.
@@ -340,8 +340,15 @@ overall implementation strategy (why this approach, not another). Plain-English
 prose, diagrams disabled. Reference the design doc + spec — do not restate them.]
 
 ## Files
-[Every file to create or modify — aggregate of the per-phase "Files to modify".]
+[Every file to create or modify — aggregate of the per-step "Files to modify".]
 - `path/to/file.py` — [what changes]
+
+## Delegation Authority
+[Plain-English: which files the implementer may touch, and what to do if a change needs a file outside the list. Keeps the build inside the plan and makes any deviation visible + reasoned.]
+- **Allowed set** = the union of every step's "Files to modify" (= the ## Files list). Nothing outside it.
+- A file in ## Files but assigned to ANOTHER step = a dependency (run steps per ## Implementation Order), not a deviation.
+- A file NOT in ## Files = STOP, do not silently edit. Record in an `### Out-of-scope touches` block of the end-of-implementation report: the file, why the step needed it, the change, and whether it signals a plan/spec gap. Present all such entries at the end.
+- **Hard off-limits (escalate before touching):** [list THIS project's frozen surfaces — e.g. frozen contracts / interface shapes, DB schema + migrations, seam/abstraction signatures, lint/guard config, and source-of-truth docs (CLAUDE.md / STATE.md / roadmap / rules — doc-sync is the pipeline-end job, not the implementer's). Derive the coupling from the impact-analyzer blast-radius on the touched files.]
 
 ## Rules Applied
 [Cite rule IDs from the injected --- WRIT RULES --- block that govern this work
@@ -349,22 +356,37 @@ prose, diagrams disabled. Reference the design doc + spec — do not restate the
 
 ## Capabilities
 [Each testable behavior this plan delivers, as an UNCHECKED checkbox — aggregate of
-the per-phase Test criteria. Checked only after implementation (feeds
+the per-step Test criteria. Checked only after implementation (feeds
 verify-before-claim). Do not pre-check.]
 - [ ] [Specific, verifiable behavior]
 
-## Phases
+## Implementation Order
+[Plain-English: which steps run first, what each depends on, which can run in parallel. **Derive the dependency graph FACTUALLY from codegraph — `codegraph_callers` on each symbol a step touches (who depends on it) + `codegraph_explore` for the call paths — not from guesswork.** State the evidence for each dependency.]
 
-### Phase 1 — <Short name>
-**Goal**: [What this phase delivers, in one sentence]
+**Dependency table:**
+| Step | Produces | Depends on | Why (cite the codegraph fact) |
+|---|---|---|---|
+| 1 | … | — | none |
+| N | … | Step M | e.g. "imports X that Step M creates" |
+
+**Parallel waves** (each wave's steps must touch DISJOINT files — verify via the ## Files list that no two steps in a wave write the same file):
+- Wave A (no deps): Step …
+- Wave B (after A): Step …
+
+**Critical path:** Step … → … → …. Solo linear order: ….
+
+## Steps
+
+### Step 1 — <Short name>
+**Goal**: [What this step delivers, in one sentence]
 
 **Design**:
-[Plain-English description of what this phase changes and why — describe the
+[Plain-English description of what this step changes and why — describe the
 before/after behavior in words. (Diagrams temporarily disabled.)]
 
-**Steps**:
-1. [Concrete step]
-2. [Concrete step]
+**Actions**:
+1. [Concrete action]
+2. [Concrete action]
 ...
 
 **Files to modify**:
@@ -378,10 +400,21 @@ before/after behavior in words. (Diagrams temporarily disabled.)]
 
 ---
 
-### Phase 2 — <Short name>
+### Step 2 — <Short name>
 [same structure]
 
 ---
+
+## E2E Done Criteria
+[Plain-English: unit/route tests passing is necessary but NOT sufficient. Before "done", the implementer runs the app like a real end user / QC tester on the LIVE stack and OBSERVES (browser, terminal, logs, DB, …) that each capability actually happens — capturing evidence.]
+
+**Prerequisites:** [the real running stack + services/creds needed — not mocks.]
+
+**Walkthrough** (each line: action → observe → expected; map to the ## Capabilities IDs):
+1. [user action] → observe [the concrete signal: log line / DB row / UI state] → expected [result]
+2. …
+
+**Done gate:** every line observed + matching, evidence captured, plus all step-level tests/lint/build passing. If a live observation diverges from a passing unit test, the live observation wins — fix + re-run before marking done.
 
 ## Open Questions
 [Any decisions not yet made — things the human needs to decide before implementation]
@@ -390,15 +423,19 @@ before/after behavior in words. (Diagrams temporarily disabled.)]
 [Things explicitly NOT included in this plan]
 ```
 
-## Rules for writing phases
+## Rules for writing steps
 
-- **Reference the spec — do not restate it.** The spec is the source of truth for WHAT to build; the plan owns HOW. For each phase, name the spec component IDs it implements (e.g. "implements spec components 1–3") and let the reader open the spec for the Build description, file inventory, and Done-when criteria. The plan adds ONLY what the spec lacks: the architecture section, TDD RED→GREEN ordering, exact line numbers (from research), commit boundaries, and status. Do NOT copy the spec's Build steps, Files-to-modify, Done-when, or Out-of-scope verbatim — link to them. A plan that is ~35% duplicated spec text is wrong; trim it.
-- Each phase must be independently testable before moving on
-- No phase should touch more than 3–4 files at once
-- Tests come BEFORE the next phase starts — never at the end
-- If a phase feels too large, split it
-- If a phase introduces a new handler, classifier, or processing step, Phase 1 of that feature must define the Protocol (the socket) as a standalone step — before any concrete class. The interface is the deliverable, not the first working implementation.
-- No phase may implement behavior hardcoded to a specific source type, AI provider, or output format without flagging it explicitly as known coupling in the phase's Notes.
+> **Naming.** Implementation sub-units are **Steps** (`## Steps`, `### Step N`), never "Phases" — "Phase" is reserved for roadmap phases (P0/P1/P2…). The concrete-action list inside a Step is **`**Actions**:`**, not "Steps" (avoids the Step/steps collision). If the project's CLAUDE.md defines its own Phase/Step convention, follow it.
+
+- **Reference the spec — do not restate it.** The spec is the source of truth for WHAT to build; the plan owns HOW. For each step, name the spec component IDs it implements (e.g. "implements spec components 1–3") and let the reader open the spec for the Build description, file inventory, and Done-when criteria. The plan adds ONLY what the spec lacks: the architecture section, TDD RED→GREEN ordering, exact line numbers (from research), commit boundaries, and status. Do NOT copy the spec's Build steps, Files-to-modify, Done-when, or Out-of-scope verbatim — link to them. A plan that is ~35% duplicated spec text is wrong; trim it.
+- Each step must be independently testable before moving on
+- No step should touch more than 3–4 files at once
+- Tests come BEFORE the next step starts — never at the end
+- If a step feels too large, split it
+- If a step introduces a new handler, classifier, or processing step, the first step of that feature must define the Protocol (the socket) as a standalone step — before any concrete class. The interface is the deliverable, not the first working implementation.
+- No step may implement behavior hardcoded to a specific source type, AI provider, or output format without flagging it explicitly as known coupling in the step's Notes.
+- **Build `## Implementation Order` + `## Delegation Authority` from facts, not inference.** Use codegraph — `codegraph_callers` on each symbol a step touches (who depends on it) and `codegraph_explore` for call paths — to derive the real dependency graph + the off-limits coupling. The impact-analyzer hook auto-fires whenever you Read a spec/plan `.md` and injects a caller blast-radius report — use that signal. Never hand-wave the dependency order or the file-touch boundary.
+- **`## E2E Done Criteria` is mandatory for medium/heavy plans** (optional for tiny/doc-only). It must be a real end-user/QC walkthrough on the LIVE stack with observed signals, not a restatement of unit tests.
 
 ---
 
@@ -423,11 +460,11 @@ Only revise the plan after the human responds to any open questions raised in th
 After writing the file, run the mid-session STATE.md write from `update-project-docs`:
 - Read `STATE.md` from project root. If it does not exist: skip silently.
 - Find or create the section for active/in-progress work.
-- Add a pending checklist block for the new feature's phases:
+- Add a pending checklist block for the new feature's steps:
   ```
   **[$FEATURE — Plan written <date>]** _(PENDING implementation)_:
-  - [ ] Phase 1 — <name>
-  - [ ] Phase 2 — <name>
+  - [ ] Step 1 — <name>
+  - [ ] Step 2 — <name>
   ...
   ```
 - Update `_Last updated_` date at top of STATE.md.

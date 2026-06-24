@@ -43,13 +43,22 @@ if curl -fsS --max-time 1 "http://${WRIT_SESSION_HOST:-localhost}:${WRIT_PORT}/h
     exit 0
 fi
 
-# Daemon down: a direct list is cheap. If the graph already carries PROJ-
-# constraints, nothing was lost.
+# Daemon down: a direct list is cheap. Compare what the graph carries against
+# what is committed and re-seed on DRIFT (graph has fewer than committed), not
+# only when the graph is empty. This covers two cases with one idempotent MERGE:
+#   - clobber  -> graph wiped (count 0) vs committed constraints intact
+#   - new pull -> committed rules added on another machine, pulled here, but the
+#                 graph still holds the old (smaller) set (B18 symptom A: graph 1,
+#                 docs/rules 3). The empty-only guard missed this entirely.
+# Expected = number of committed rules; each is wrapped in a "RULE START" marker.
+EXPECTED="$(grep -rho 'RULE START:' "$RULES_DIR" 2>/dev/null | wc -l | tr -d ' ')"
 COUNT="$(bash "$WRIT_DIR/bin/writ-project-rules.sh" list --json 2>/dev/null | python3 -c "import sys,json
 try: print(len(json.load(sys.stdin)))
 except Exception: print(0)" 2>/dev/null || echo 0)"
-[ "${COUNT:-0}" -gt 0 ] && exit 0
 
-# Committed constraints exist but the graph lost them -> restore.
+# Graph carries every committed constraint -> nothing lost, nothing to restore.
+[ "${EXPECTED:-0}" -gt 0 ] && [ "${COUNT:-0}" -ge "${EXPECTED:-0}" ] && exit 0
+
+# Drift (clobber or newly-pulled rules) -> restore via idempotent MERGE import.
 bash "$WRIT_DIR/bin/writ-project-rules.sh" seed >/dev/null 2>&1 || true
 exit 0

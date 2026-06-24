@@ -202,7 +202,7 @@ printf "\n${GREEN}${BOLD}══════════════════�
 printf "${GREEN}${BOLD}  Writ plugin uninstalled${RESET}\n"
 printf "${GREEN}${BOLD}════════════════════════════════════════════${RESET}\n"
 note "Next: restart Claude Code, then reinstall:"
-note "  claude plugin marketplace add /Users/phatchenh/01_all_projects/falkor-writ"
+note "  claude plugin marketplace add $(cd "$(dirname "$0")/.." && pwd)"
 note "  claude plugin install writ@writ"
 note "  bash scripts/bootstrap-plugin.sh"
 [ "$DRY_RUN" -eq 1 ] && warn "DRY RUN — nothing was changed."

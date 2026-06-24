@@ -284,3 +284,39 @@ Type checker config (mypy `disallow_untyped_defs`, tsc `noImplicitAny`).
 Implicit Any defeats the type system. Explicit return types ensure the checker actually validates the contract.
 
 <!-- RULE END: DOC-TYPE-002 -->
+
+<!-- RULE START: DOC-SYNC-001 -->
+## Rule DOC-SYNC-001
+
+**Domain**: documentation
+**Severity**: Medium
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When a decision is locked or changed mid-work: scope cut or added, a plan resequenced, a frozen contract superseded, a new domain term coined, an open question resolved, or any choice that contradicts or adds to what a written project doc currently states.
+
+### Statement
+Immediately run a two-pass doc check: a contradiction pass (which docs now state something FALSE?) and an omission pass (what is now TRUE but ABSENT? — especially a new or changed domain term, which belongs in the glossary). Update the diverged docs now, or — if a fuller sweep is deferred to a checkpoint — record the divergence with a breadcrumb pointing at the deferred work. Do not silently continue with docs that now disagree with the decision.
+
+### Violation
+```
+# A decision changes the model (e.g. "the screen is now a feed, not a canvas").
+# The author keeps coding, leaves a doc asserting the old model (contradiction),
+# and never records the newly-coined term (omission). The next reader hits a
+# false statement plus a missing term.
+```
+
+### Pass
+```
+# On locking the decision: rewrite every now-false claim AND add the new term to
+# the glossary, then resume. Contradiction pass + omission pass, both run.
+```
+
+### Enforcement
+advisory
+
+### Rationale
+The dangerous failure is attention-under-load: mid-work a decision diverges from the docs and the author keeps going, leaving stale claims (contradiction) or missing terms (omission) for the next reader. Omissions slip especially easily because a missing glossary entry is not a false statement, so a find-what-is-wrong pass never surfaces it. An ambient reminder at the divergence moment recovers the doc sync that would otherwise be deferred and forgotten.
+
+<!-- RULE END: DOC-SYNC-001 -->

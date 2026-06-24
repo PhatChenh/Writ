@@ -89,11 +89,22 @@ When integrating with external services (HTTP APIs, third-party SDKs, message qu
 ### Statement
 External service calls are wrapped in an adapter/client class. Business logic invokes the adapter, never the raw HTTP/SDK call. The adapter centralizes retries, timeouts, error mapping, and observability.
 
+**Swap-seam scope.** Not every external dependency is a swap seam. Declare explicitly which dependencies are swap seams (e.g. payment gateway, AI provider, email sender, object store); foundational dependencies — the application framework, the ORM, a rendering/canvas library — are NOT swap seams and must not be hidden behind an adapter. Over-abstracting foundational dependencies adds indirection with no swap benefit.
+
+**No automatic silent failover.** When an adapter call fails, surface a clean error to the caller and let it retry or re-pick; never silently route to a secondary provider inside the adapter. Silent failover hides failures, breaks least-surprise, and makes error budgets and cost/quality attribution untrackable. Retry and provider re-pick are the caller's decision.
+
 ### Violation
 ```python
 class OrderService:
     def charge(self, order):
-        resp = requests.post('https://api.stripe.com/v1/charges', ...)  # raw
+        resp = requests.post('https://api.stripe.com/v1/charges', ...)  # raw SDK in business code
+```
+```python
+class PaymentAdapter:
+    def charge(self, order):
+        try:    return self._stripe.charge(...)
+        except Exception:
+            return self._paypal.charge(...)   # silent automatic failover to a second provider
 ```
 
 ### Pass
@@ -104,12 +115,19 @@ class OrderService:
     def charge(self, order):
         return self.payments.charge(order.customer, order.amount)
 ```
+```python
+class PaymentAdapter:
+    def charge(self, order):
+        try:    return self._provider.charge(...)
+        except ProviderError as e:
+            raise ServiceError(f"payment failed: {e}")  # surface clean error; caller retries / re-picks
+```
 
 ### Enforcement
-Code review.
+Code review. Import linting can restrict raw provider-SDK imports to designated adapter modules.
 
 ### Rationale
-Raw external calls in business code couple every caller to the vendor's API shape, error model, and retry semantics. Adapter classes isolate that surface.
+Raw external calls in business code couple every caller to the vendor's API shape, error model, and retry semantics. Adapter classes isolate that surface. Declaring swap seams explicitly prevents the opposite error — abstracting everything (framework, ORM) for no payoff. Banning silent automatic failover keeps failure observable: the alert, the error budget, and the retry decision belong to the caller, not hidden inside the adapter.
 
 <!-- RULE END: ARCH-BOUNDARY-001 -->
 ---

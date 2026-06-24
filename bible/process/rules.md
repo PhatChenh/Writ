@@ -556,3 +556,79 @@ ENF-PROC-TDD-001 (failing test before src/ write) gate. Code review.
 Test-first ensures tests describe the contract independent of the implementation. Test-after risks tests that codify whatever the implementation happens to do.
 
 <!-- RULE END: PROC-TEST-001 -->
+
+<!-- RULE START: PROC-PLAN-002 -->
+## Rule PROC-PLAN-002
+
+**Domain**: process
+**Severity**: Medium
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When writing or revising an implementation plan document (e.g. the artifact produced by plan-from-specs / build-pipeline, or any equivalent plan) for a medium or heavy change.
+
+### Statement
+A plan's implementation sub-units are named **Steps** (`## Steps`, `### Step N`), never "Phases" — "Phase" is reserved for roadmap phases (P0/P1/…); the concrete-action list inside a Step is `**Actions**:`. Beyond the gate sections (Files / Rules Applied / Capabilities), a medium/heavy plan also carries three sections, each derived from facts not inference: (1) **Implementation Order** — a step dependency graph + parallel waves, built from the real call graph (codegraph `codegraph_callers`/`codegraph_explore` where the repo is indexed, else the equivalent dependency trace) on each step's touched symbols, not guessed; (2) **Delegation Authority** — the exact file set the implementer may touch (= the Files list) + the off-limits coupling, with a rule that any out-of-scope touch stops and is reported with reasoning; (3) **E2E Done Criteria** — a real end-user/QC walkthrough on the LIVE stack with observed signals (logs/DB/UI) mapped to the capability IDs, not a restatement of unit tests. (E2E is optional for a tiny 1–2-file plan with no observable end-user effect.)
+
+### Violation
+```
+# Plan headed "## Phases / ### Phase 1"; dependency order implied prose only;
+# no statement of which files the implementer may touch; "Done when: unit tests
+# pass." Implementer parallelizes wrong, edits a frozen contract, and calls it
+# done without ever running the feature like a user.
+```
+
+### Pass
+```
+# "## Steps / ### Step N" with "**Actions**:" lists. ## Implementation Order
+# has a dependency table (each edge cites a codegraph caller fact) + parallel
+# waves over disjoint files. ## Delegation Authority lists the allowed file set
+# + hard off-limits. ## E2E Done Criteria is a live walkthrough: log in, type a
+# prompt, observe the worker log + DB row + rendered UI.
+```
+
+### Enforcement
+advisory (surfaces at plan-write; plan-from-specs + build-pipeline templates carry it). Not a hard plan-gate section — tier-dependent.
+
+### Rationale
+The gate sections prove a plan *exists*; they do not prove it is *executable in parallel without collision*, *bounded in what it may touch*, or *verified the way a user would verify it*. Implementation order built from real call-graph edges (codegraph) prevents wrong parallelization and forward-dependency stalls; an explicit file-touch boundary makes scope creep and frozen-contract edits visible instead of silent; a live E2E walkthrough catches the class of bug where every unit test is green but the assembled feature does not actually work for a user. "Phases" in a plan collides with roadmap-phase terminology and misleads readers.
+
+<!-- RULE END: PROC-PLAN-002 -->
+
+<!-- RULE START: PROC-INTEG-001 -->
+## Rule PROC-INTEG-001
+
+**Domain**: process
+**Severity**: High
+**Scope**: Component
+**Mandatory**: false
+
+### Trigger
+When about to write or modify code that integrates a third-party library, SDK, platform, or external service — specifically when choosing an API call, endpoint, config flag, version, or syntax for that integration.
+
+### Statement
+Before writing the integration, verify the ACTUAL current API shape (endpoints, parameters, version, config flags, syntax) against an authoritative source — official docs, the installed package's own type definitions, or a written research note — NOT from model memory. If no verified note exists, create one (pin the version, record the shape + pitfalls + source) before coding. Integration decisions with cascading downstream effect must rest on checked facts. Precedence on conflict: a task-local verified research note > a durable project research doc > model memory.
+
+### Violation
+```
+# Instantiating an ORM client with no driver adapter from a prior-major-version
+# memory, or importing a renamed/deprecated SDK symbol — emitted from training
+# memory without checking — then discovering at boot/build that the API moved.
+```
+
+### Pass
+```
+# Open the verified note (or the package's own type defs) -> confirm the current
+# signature -> code against it. No note for a new lib -> check official docs + the
+# INSTALLED version, write a short note (version + shape + pitfalls + source), THEN code.
+```
+
+### Enforcement
+advisory-only
+
+### Rationale
+Model training lags reality by months; fast-moving libraries (ORMs, AI SDKs, framework majors, cloud clients) ship breaking changes after the cutoff. Coding an integration from memory emits stale or legacy patterns that fail at boot or build — costly when the decision has cascading downstream effect. Verifying against live docs / installed types and recording the fact makes every later integration rest on checked information, not a confident guess.
+
+<!-- RULE END: PROC-INTEG-001 -->
+

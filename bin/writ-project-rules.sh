@@ -74,7 +74,13 @@ do_seed() {
     # into this repo's graph. Idempotent (MERGE). Universal bible is a separate
     # concern seeded at bootstrap; we only restore PROJ- here.
     if [ -d "$RULES_DIR" ] && [ -n "$(find "$RULES_DIR" -name '*.md' -print -quit 2>/dev/null)" ]; then
-        (cd "$WRIT_REPO_ROOT" && writ import-markdown "$RULES_DIR" --only Rule)
+        # Run the import through the RESOLVED venv interpreter ($WRIT_PYTHON, set
+        # by common.sh), NOT the bare `writ` shim. The shim probed only its own
+        # skill-dir .venv, which does not exist on a cache-venv-only install
+        # (~/.cache/writ/.venv) -> `seed` died with "venv python not found" and
+        # the SessionStart re-seed silently no-op'd (B18). $WRIT_PYTHON probes
+        # every known venv location, so this survives a folder move/rename.
+        (cd "$WRIT_REPO_ROOT" && "$WRIT_PYTHON" -m writ.cli import-markdown "$RULES_DIR" --only Rule)
     else
         echo "writ-project-rules: no $RULES_DIR/**/*.md to seed" >&2
     fi

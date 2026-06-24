@@ -350,10 +350,18 @@ FIRST check the research doc's "Invalidated Assumptions" — if non-empty, STOP 
 
 Reference spec component IDs; do NOT restate the spec.
 
+Name implementation sub-units **Steps** (`## Steps`, `### Step N`) — never "Phases" (reserved for roadmap P0/P1/…); the action list inside a Step is `**Actions**:`. Follow the project CLAUDE.md Phase/Step convention if it has one.
+
 Write the COMPLETE plan file in ONE Write call using plan-from-specs' Step 4 template: ## Analysis,
-## Files, ## Rules Applied, ## Capabilities (unchecked `- [ ]`), ## Phases, ## Open Questions,
-## Out of Scope. The ## Files / ## Rules Applied / ## Capabilities sections are REQUIRED by Writ's
+## Files, ## Delegation Authority, ## Rules Applied, ## Capabilities (unchecked `- [ ]`),
+## Implementation Order, ## Steps, ## E2E Done Criteria, ## Open Questions, ## Out of Scope.
+The ## Files / ## Rules Applied / ## Capabilities sections are REQUIRED by Writ's
 plan-gate (_validate_phase_a) — omitting them blocks the downstream work gate. A partial file is INCOMPLETE.
+Build ## Implementation Order (step dependency graph + parallel waves) and ## Delegation Authority
+(allowed file set + off-limits coupling) FACTUALLY from codegraph — `codegraph_callers`/`codegraph_explore`
+on each step's touched symbols — not from inference (the impact-analyzer hook auto-injects a caller
+blast-radius when you Read the spec/plan). ## E2E Done Criteria = a real end-user/QC walkthrough on the
+LIVE stack with observed signals (logs/DB/UI), mapped to the ## Capabilities IDs — not a restatement of unit tests.
 
 Write the plan to "docs/AI_artifacts/4_plans/<slug>.md". Non-coder readable is the default.
 Do NOT run plan-from-specs Step 6 (the mid-session STATE.md write) — the orchestrator updates STATE.md once at pipeline end.
@@ -373,9 +381,15 @@ scope (touches 3+ modules, crosses public API boundary, hits CONSTRAINTS.md cons
 4+ integration points), HARD STOP. Report: "Classified as tiny but found [complexity]. Recommend
 re-running as medium." Do NOT produce a plan over hidden complexity.
 
+Name implementation sub-units **Steps** (`## Steps`, `### Step N`) — never "Phases"; the action list inside a Step is `**Actions**:`.
+
 Write the COMPLETE plan file in ONE Write call using plan-from-specs' Step 4 template: ## Analysis,
-## Files, ## Rules Applied, ## Capabilities (unchecked `- [ ]`), ## Phases, ## Open Questions,
-## Out of Scope. The ## Files / ## Rules Applied / ## Capabilities sections are REQUIRED by Writ's plan-gate. A partial file is INCOMPLETE.
+## Files, ## Delegation Authority, ## Rules Applied, ## Capabilities (unchecked `- [ ]`),
+## Implementation Order, ## Steps, ## Open Questions, ## Out of Scope. The ## Files / ## Rules Applied /
+## Capabilities sections are REQUIRED by Writ's plan-gate. A partial file is INCOMPLETE.
+(## E2E Done Criteria is OPTIONAL for tiny tier — a 1–2-file change rarely needs a full live walkthrough;
+include it only if the change has an observable end-user effect. ## Implementation Order may be trivial for
+a 1-step tiny plan — keep it but it can be one line.)
 
 Write the plan to "docs/AI_artifacts/4_plans/<slug>.md". Non-coder readable is the default.
 Do NOT run plan-from-specs Step 6.
