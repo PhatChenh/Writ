@@ -39,16 +39,17 @@ VENV_DIR="${WRIT_DATA}/.venv"
 VENDOR_DIR="${WRIT_DIR}/vendor"
 
 # ── Per-repo port (D4-02 "A-auto") ──────────────────────────────────────────
-# MUST mirror bin/lib/common.sh: WRIT_PORT = 8765 + cksum(repo_root) % 1000,
-# repo_root = git toplevel of the plugin/repo dir. This keeps the daemon
-# bootstrap starts (cd "$WRIT_DIR" && writ serve) on the SAME port the hooks
-# query, instead of a hardcoded 8765 that never matched. Explicit env wins.
-if [ -z "${WRIT_PORT:-}" ]; then
-    WRIT_REPO_ROOT="$(git -C "$WRIT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$WRIT_DIR")"
-    _writ_port_hash=$(printf '%s' "$WRIT_REPO_ROOT" | cksum | cut -d' ' -f1)
-    WRIT_PORT=$(( 8765 + _writ_port_hash % 1000 ))
-fi
-export WRIT_PORT
+# WRIT_PORT is derived in bin/lib/common.sh (single source of truth) from
+# WRIT_REPO_ROOT = 8765 + cksum(repo_root) % 1000. Pin the repo root to the
+# PLUGIN dir's git toplevel (not whatever CWD bootstrap was invoked from) so
+# the daemon serves THIS repo's graph on the SAME port the hooks query.
+# common.sh is sourced at step 7 -- after the venv it prefers exists -- where
+# it exports WRIT_PORT and provides the detached-spawn + stale-state-clean
+# helpers the daemon launch needs. Trailing-slash normalized so the hash is
+# stable (B3).
+WRIT_REPO_ROOT="$(git -C "$WRIT_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$WRIT_DIR")"
+[ "$WRIT_REPO_ROOT" != "/" ] && WRIT_REPO_ROOT="${WRIT_REPO_ROOT%/}"
+export WRIT_REPO_ROOT
 
 # ── Colors (ANSI, degrade gracefully on dumb terminals) ─────────────────────
 if [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; then
@@ -257,12 +258,25 @@ fi
 
 # ── 7. Start Writ daemon ───────────────────────────────────────────────────
 step "Starting Writ daemon"
+# Source common.sh here (the venv from step 3 is active, so its python resolver
+# finds it) for the per-repo WRIT_PORT and the detached daemon spawn / stale
+# state clean helpers. The daemon MUST be launched session-detached via
+# writ_spawn_daemon_detached (os.setsid): a bare `nohup writ serve &` stays in
+# this script's process session and is reaped by Claude's process-tree SIGTERM
+# (Claude Code issue #43123) within ~0.2s, so the /health wait loop below never
+# succeeds -- the "daemon did not become healthy within 10s" reinstall failure
+# (B17). writ_clean_stale_embedded_state first clears any socket/lock a prior
+# reaped daemon left behind (B9, the uninstall-keep-cache-then-reinstall case).
+# shellcheck disable=SC1091
+source "${WRIT_DIR}/bin/lib/common.sh"
+
 DAEMON_URL="http://localhost:${WRIT_PORT}/health"
 if curl -sf --connect-timeout 0.5 "$DAEMON_URL" >/dev/null 2>&1; then
     ok "writ serve already running"
 else
     WRIT_LOG="${WRIT_DATA}/server.log"
-    (cd "${WRIT_DIR}" && nohup writ serve > "$WRIT_LOG" 2>&1 &)
+    writ_clean_stale_embedded_state "$WRIT_REPO_ROOT"
+    writ_spawn_daemon_detached "$VENV_DIR/bin/python3" "$WRIT_PORT" "$WRIT_LOG" "$WRIT_REPO_ROOT"
     printf "   waiting for /health "
     waited=0
     while [ $waited -lt $DAEMON_WAIT_SECONDS ]; do

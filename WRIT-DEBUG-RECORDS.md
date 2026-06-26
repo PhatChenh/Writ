@@ -6,7 +6,7 @@ debugging "writ isn't working" — most symptoms here look different but share a
 root causes (port derivation, the plugin-cache copy, daemon lifecycle under Claude
 hooks, macOS python 3.9).
 
-Last updated: 2026-06-23.
+Last updated: 2026-06-26.
 
 ---
 
@@ -317,6 +317,17 @@ the re-observed gate-deny / phase-reset / SID-mismatch class. B13–B16 are new 
   - **(2) Bootstrap seeding — applied to repo, ⛔ NOT YET VERIFIED.** New step "6c" in `scripts/bootstrap-plugin.sh` seeds the same 13 rules into `~/.claude/settings.json` via an additive + idempotent + order-preserving jq filter, so future installs are covered. `bash -n`, jq dry-run, and cache-sync are STILL OWED — the classifier outage blocked every verification Bash this session.
 - **Still owed (next AI, when classifier steady):** `bash -n scripts/bootstrap-plugin.sh`; jq dry-run (idempotency + empty `{}` case); `cp` → `~/.claude/plugins/cache/writ/writ/1.5.0/scripts/bootstrap-plugin.sh` + grep-confirm. Per the Recurring fix checklist below.
 - **Note:** the classifier outage is Anthropic-side (model availability), not a writ bug — but the missing allowlist is what turned a transient outage into a hard workflow block. The fix makes writ resilient to it.
+
+### B21 — `bootstrap-plugin.sh` daemon launch never session-detached → "daemon did not become healthy within 10s" on reinstall — ✅ FIXED 2026-06-26
+- **Severity:** high (every plugin install/reinstall fails the health gate).
+- **Symptom:** `claude plugin uninstall writ@writ` (keep cache) → `claude plugin install writ@writ` → `bash scripts/bootstrap-plugin.sh` prints `daemon did not become healthy within 10s` and `exit 1`. The daemon later appears online anyway — because a hook (`writ-rag-inject` / `session-start-bootstrap`, which DO use the detached spawn) respawned it on the next session event. So bootstrap's own launch was the only broken path.
+- **Evidence:** `<repo>/.writ/redis.log` showed the bootstrap-started redis receiving `SIGTERM` ~0.2s after start (the B4/B17 reap signature); `~/.cache/writ/server.log` then showed a LATER hook-spawned daemon healthy on the port. Bootstrap's 10s `/health` loop never saw the reaped process.
+- **Root cause:** B17 (2026-06-23) fixed the THREE HOOK launch sites to call `writ_spawn_daemon_detached` (python double-fork + `os.setsid()` → PPID=1, unreapable) but **never updated `scripts/bootstrap-plugin.sh`**. Bootstrap still launched with bare `(cd "$WRIT_DIR" && nohup writ serve > log 2>&1 &)` — `nohup … &` does NOT start a new session, so on macOS (no shell `setsid`) the daemon stays in bootstrap's process session and is reaped by Claude's process-tree SIGTERM (issue #43123) the moment bootstrap returns. The 10s health loop polls a dead process → failure. The uninstall-keep-cache-then-reinstall path additionally leaves a reaped daemon's stale `redis.sock` + dead-owner `graph.lock` (B9), which bootstrap also did not clean before spawning.
+- **Fix (2026-06-26, `scripts/bootstrap-plugin.sh`):**
+  - **Top port block** replaced: bootstrap no longer hand-derives `WRIT_PORT`. It pins `WRIT_REPO_ROOT` to the plugin dir's git toplevel (trailing-slash normalized — B3) and exports it. `WRIT_PORT` derivation is delegated to `bin/lib/common.sh` (single source of truth, B2 — honors `WRIT_PORT_OVERRIDE`, ignores stale bare `WRIT_PORT`).
+  - **Step 7** now `source "${WRIT_DIR}/bin/lib/common.sh"` (safe at step 7 — the venv from step 3 is active, so common.sh's python resolver finds it; the line-100 caveat only applies pre-venv), then calls `writ_clean_stale_embedded_state "$WRIT_REPO_ROOT"` (clears the reaped-daemon stale socket/lock — B9) followed by `writ_spawn_daemon_detached "$VENV_DIR/bin/python3" "$WRIT_PORT" "$WRIT_LOG" "$WRIT_REPO_ROOT"` instead of the reaped `nohup writ serve &`. The `/health` wait loop is unchanged.
+- **Verified live (2026-06-26):** killed the 9734 daemon + redis, ran `env -u CLAUDE_PLUGIN_ROOT bash scripts/bootstrap-plugin.sh` → `daemon ready` in ~1s, `exit 0`. Spawned daemon: `PPID=1`, stdin `/dev/null`, bound `127.0.0.1:9734` (not LAN), `/health` `healthy rule_count:279 mandatory:30`, redis.log clean (no SIGTERM). Synced to `~/.claude/plugins/cache/writ/writ/1.5.0/scripts/bootstrap-plugin.sh` + `bash -n` clean. **Restart Claude Code** for any in-flight session. A future `claude plugin install` re-copies this fixed file from the repo automatically.
+- **Pre-existing cosmetic, NOT fixed (out of scope):** the ready-banner prints `Rules loaded: ?` because it reads `rule_count` from `/stats` (which has no such field) — `/health` is the source that returns `rule_count`. unrelated to this bug; left alone per surgical scope.
 
 ## Recurring fix checklist (when you change any hook/script)
 
