@@ -39,6 +39,18 @@ When the dispatch prompt contains `NON-INTERACTIVE: true`, this skill is running
 - **All other rules remain in force.** Non-interactive mode skips interactive gates — it does not skip analysis or file writes.
 - **CRITICAL: the architecture section is NOT the end of your task.** After writing it, you MUST proceed to Step 4 and write the COMPLETE plan file. A response that only contains the architecture section is INCOMPLETE.
 
+## Write discipline — the narration trap (known failure mode)
+
+A dispatched plan subagent can end its turn on intent-narration — "Let me now write the complete plan" / "Now writing the full plan" — WITHOUT ever calling the Write tool. The file is never created; the result message reads as if the write is about to happen. It is not. This is the single most common reason a plan dispatch "completes" but the file is missing — and it is invisible from the outside, indistinguishable from a pending action.
+
+**Hard rules:**
+- Your first artifact-producing action is a `Write` tool call to `docs/AI_artifacts/4_plans/$FEATURE.md` — not a Read, not a codegraph call, not a sentence that says you are about to write. Once your reading is done, the very next thing you do is call Write.
+- The phrases "now writing", "let me write", "about to write", "I'll write the plan next" are forbidden. They are the narration that replaces the tool call. If you catch yourself composing them, STOP and call Write instead.
+- If a `Write` is denied by a hook (e.g. a Writ plan-gate rejecting placeholder text), paste the exact denial text verbatim in your reply — do NOT silently move on or re-narrate. A silent denial looks identical to the narration trap from the orchestrator's side.
+- For a large plan (~40KB+), do NOT try to emit the whole file in one Write call if that is blocking you — Step 3 already created the file with the header + `## Architecture`; `Edit`-append the remaining sections one at a time (`## Files`, then `## Rules Applied`, then the rest). A partial-but-growing file beats a perfect-but-unwritten one.
+
+**Self-check before you end your turn:** did you actually call the `Write` tool at least once this turn, and does the file exist on disk with real content? If the plan file is still missing or empty, you are in the trap — call Write now, do not end the turn.
+
 ## Input
 
 Feature to plan: $ARGUMENTS
@@ -297,7 +309,7 @@ _Status: [ ] pending_
 [Plain-English: what the build adds, how it connects to existing components, and why it's built this way. The remaining gate sections (## Files, ## Delegation Authority, ## Rules Applied, ## Capabilities, ## Implementation Order, ## Steps, ## E2E Done Criteria, ## Open Questions, ## Out of Scope) are written in Step 4.]
 ```
 
-Then proceed directly to Step 4 and write the complete plan. Do NOT stop to present the architecture, do NOT call `AskUserQuestion`, do NOT wait for approval — it is already written to the file. The dispatching orchestrator reviews it in the main thread after you return; an interactive human (if any) reviews it there, not here.
+Then proceed directly to Step 4 and write the complete plan. Do NOT stop to present the architecture, do NOT call `AskUserQuestion`, do NOT wait for approval — it is already written to the file. The dispatching orchestrator reviews it in the main thread after you return; an interactive human (if any) reviews it there, not here. **If you have not yet called the `Write` tool this turn, you are in the narration trap (see "Write discipline" above) — call `Write` now, before anything else; do not end your turn on "now writing".**
 
 ### Tier escalation (tiny only)
 

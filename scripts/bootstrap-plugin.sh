@@ -212,6 +212,49 @@ fi
 step "User skills (delegated to deploy.py — not copied)"
 ok "skill install delegated to deploy.py (skill_library/tools/deploy.py); bootstrap skips copy"
 
+# ── 6c. Seed Writ command allowlist into user settings ──────────────────────
+# Pre-approve the Bash commands the agent is DIRECTED to run (mode set,
+# project-rules, writ console, gate checks) so they bypass Claude Code's auto
+# safety-classifier. Without this, those commands rely on the classifier to
+# approve them at runtime; when the classifier is unavailable the mode-set
+# directive (and every other writ command) is hard-blocked, wedging the
+# workflow. Patterns use a leading `*` to match any python/bash prefix and
+# `*/bin/...` (NOT the legacy `*writ/bin/...`) so they match the plugin-cache
+# path `.../writ/<ver>/bin/writ` too. Additive + idempotent + order-preserving.
+step "Seeding Writ command allowlist into ~/.claude/settings.json"
+USER_SETTINGS="$HOME/.claude/settings.json"
+WRIT_ALLOW='[
+  "Bash(*writ-session.py *)",
+  "Bash(*writ-project-rules.sh *)",
+  "Bash(*/bin/writ query *)",
+  "Bash(*/bin/writ status*)",
+  "Bash(*/bin/writ role-prompt *)",
+  "Bash(*/bin/writ validate*)",
+  "Bash(*/bin/writ analyze-friction*)",
+  "Bash(*/bin/writ audit-session*)",
+  "Bash(bash */bin/check-gates.sh*)",
+  "Bash(bash */bin/verify-files.sh*)",
+  "Bash(bash */bin/scan-deps.sh*)",
+  "Bash(bash */bin/run-analysis.sh*)",
+  "Bash(bash */bin/validate-handoff.sh*)"
+]'
+if [ ! -f "$USER_SETTINGS" ]; then
+    mkdir -p "$(dirname "$USER_SETTINGS")"
+    printf '{}\n' > "$USER_SETTINGS"
+fi
+_writ_tmp_settings="$(mktemp)"
+if jq --argjson add "$WRIT_ALLOW" '
+      .permissions.allow = (
+        (.permissions.allow // []) as $cur
+        | $cur + [ $add[] | select( . as $x | ($cur | index($x)) | not ) ]
+      )' "$USER_SETTINGS" > "$_writ_tmp_settings" 2>/dev/null; then
+    mv "$_writ_tmp_settings" "$USER_SETTINGS"
+    ok "writ command allowlist present in $USER_SETTINGS"
+else
+    rm -f "$_writ_tmp_settings"
+    warn "could not patch $USER_SETTINGS (invalid JSON?); add the writ allow rules manually"
+fi
+
 # ── 7. Start Writ daemon ───────────────────────────────────────────────────
 step "Starting Writ daemon"
 DAEMON_URL="http://localhost:${WRIT_PORT}/health"
