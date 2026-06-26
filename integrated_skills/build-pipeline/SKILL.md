@@ -32,8 +32,6 @@ Conducts the four-step feature workflow — **design → spec → research → p
 
 6. **Non-coder default (applies to every artifact).** The reader is a non-technical manager who cannot read code. This is the permanent default, not a per-invocation flag. Every section leads with a plain-English sentence of what it means and why it matters; code references (`file:line`, symbol names) go in parentheses or sub-bullets. The artifact must make sense if every `code`-formatted token were deleted. The skills enforce this via their reader-mode defaults. An `engineer-mode` opt-in flag exists for developers who want dense output — propagate it in the dispatch prompt when requested, otherwise omit (non-coder is assumed).
 
-7. **Verify the artifact on disk after every subagent return.** A dispatched subagent can end its turn on intent-narration — "Now writing the full plan", "Let me write the complete plan" — WITHOUT ever emitting the Write tool call, so the artifact file is never created and the result message reads as if the write is about to happen. This is a known failure mode, not a pending action. After every dispatch, before trusting the summary, verify the artifact exists on disk (`ls -la <path>` + a line/byte count). A missing or empty file means the run failed regardless of what the summary text claims — re-dispatch with the write-discipline guard (see Dispatch prompt templates), or, once the subagent's reads are done, write the artifact in the main thread (isolation buys nothing for the emit step). Do not re-dispatch more than twice on the same narration failure — after two failed Writes, write it in the main thread.
-
 ---
 
 ## Setup prerequisite
@@ -49,6 +47,29 @@ When the repo has a `.codegraph/` directory, CodeGraph is the PRIMARY tool for l
 - **Start every code question with `codegraph_explore "<symbols or question>"`** — one call returns the verbatim source plus the call graph. Use `codegraph_node` for one symbol's full body, `codegraph_callers` for blast radius. If the tools are deferred, load them first via ToolSearch: `select:mcp__codegraph__codegraph_explore,mcp__codegraph__codegraph_node,mcp__codegraph__codegraph_callers`.
 - **Use grep / bash / Read ONLY to view raw code AFTER CodeGraph has located it**, for non-code files (shell, yaml, config, markdown), or when there is no `.codegraph/` index.
 - **Anti-pattern:** opening with `grep -r` / `find` / Read for a code-symbol lookup — it repeats work CodeGraph already pre-computed and costs far more tokens.
+
+---
+
+## Phase -2 — Roadmap signal read + landmine scout (runs BEFORE the interview)
+
+The roadmap's **Build Order** section (dependency DAG + per-phase **Model tier** column + **Discrete landmines** list) is a standing input the architecture agent always emits. Read it FIRST and let two signals in it steer this run. Reading the roadmap tier here is a **prior that triggers scouting — NOT a tier classification.** The Phase -1 interview still runs all 7 steps and still owns the tier decision (it can escalate). Do not let this read rubber-stamp the tier (see the "do NOT pre-classify" red flag).
+
+**Signal 1 — dependency-driven context gathering.** The DAG is derived from real imports. For the phase you are building, gather context **asymmetrically**:
+- **Upstream deps (phases this one depends on)** → context-gather **FULL**. You build against their real contracts; they must match. Verify against actual code.
+- **Downstream consumers (phases that will depend on this one)** → context-gather **CONSUMER-ONLY**. Pull only the seam/contract shape they will touch (interface, return shape, IDs) — NOT their internals. They are usually not built yet, so deep-reading them is speculative and wastes tokens. Note the contract this phase must expose for them; do not survey them.
+- Example: building P5 (depends on P3, consumed later by P8) → read P3/P4 upstream FULL, note only the seam P8 will consume.
+
+Inject the resolved upstream set + the downstream contract note into the design dispatch prompt.
+
+**Signal 2 — landmine scout (gated).** Fire the scout ONLY when the roadmap marks this phase **tier A** OR names it in the **Discrete landmines** list. Tier B/C additive phases → skip; internet scouting them wastes tokens.
+
+When gated in, scout prior art **before the grill decision question that the landmine gates** — not necessarily before the whole interview. For a landmine the roadmap already names (concrete), scout pre-grill so the grill's recommended answer is informed. For a landmine the grill itself surfaces (unknown until the interview), fire the scout at that point mid/post-grill. Do not block the whole interview waiting on a scout for landmines the grill has not found yet.
+
+**Two-step scout (model-matched):**
+1. **Gather (cheaper model, e.g. Sonnet — dispatch a subagent).** Web-search how others/other systems solved this specific landmine. Return a short findings summary **PLUS the full list of source URLs PLUS the raw notable quotes** — not prose-only. The URL + quote list is mandatory: prose-only over-compression silently drops the load-bearing option and the orchestrator never knows to dig (same failure mode as research independence). Dispatch prompt ends with: "return summary + source URLs + raw quotes; do not decide anything."
+2. **Judge (orchestrator, strong model — main thread).** Read the summary, spot interesting/credible options, and pull any source URL yourself to go deeper. Synthesis on a hard-to-reverse landmine is judgment work and stays with the strong model. This feeds the grill's *recommended answer* — it does NOT decide; the user still approves (HITL).
+
+Write the scout output to `docs/AI_artifacts/0_scout/<slug>.md` (summary + sources + the options the orchestrator surfaced). This is **prior-art scouting**, distinct from `docs/online_research/` (API facts for a chosen lib) and from the research step (verifies spec assumptions against THIS codebase — trusts code, not the internet). Do not blur the three: scout findings never enter the research step's lane.
 
 ---
 
@@ -217,45 +238,12 @@ When a research dispatch returns invalidated assumptions, the orchestrator does 
 
 **Why the orchestrator may patch a type-b spec but never a type-c:** a type-b fix stays inside the already-chosen design option and below the contract/decision line — it is execution detail the orchestrator can own. A type-c fix changes the chosen approach, which is a design decision and therefore the user's call (the human has final authority on design). The bias guard holds throughout: research verifies, the spec-rewriter (with design judgment) decides, and they are never the same voice transcribing itself.
 
-## Plan completion gate — orchestrator verifies the returned plan (runs after the plan dispatch)
-
-The plan subagent sees only its inputs (spec + research). The orchestrator has run the whole pipeline (interview → design → spec → research → plan) and is the ONLY voice that knows the full doc landscape AND what the downstream implementer orchestrator (e.g. `/deepseek-orchestrate`) actually consumes. Two orchestrator-owned duties fire here, in order, after the plan subagent returns and the file is verified on disk (rule 7):
-
-### 1. Orchestrator writes `## Read first`
-
-`## Read first` is the "open before writing code" pointer list — every doc a future implementer must read before touching code (spec, research, ADRs, frozen contracts, CLAUDE.md inline invariants, STATE.md, CONTEXT.md, OPEN_QUESTIONS.md, TECH_DEBT.md, grill notes, online_research). **The plan subagent cannot write this completely** — it only saw spec + research, not the design doc's ADRs, the interview's grill notes, the design's CONTEXT term updates, or the TD/OQ entries the orchestrator folded in at phase start. The orchestrator did see all of those. So the orchestrator writes `## Read first` in the main thread, prepended to the plan file, after the plan subagent returns. Do NOT ask the plan subagent to write it — its view is too narrow and it will miss docs it never opened.
-
-The list is the union of: every artifact this pipeline produced (design, spec, research, any ADR), every frozen contract the decision touches (skeleton-contracts, prior ADRs), the inline invariants in CLAUDE.md that bear on this feature, the TD/OQ entries the phase-start scan folded in, and the online_research doc if research cited one. One bullet per doc, with the one-line reason it is load-bearing for THIS plan. End with the CodeGraph-first directive line (the repo is indexed → `codegraph_explore`/`codegraph_node`/`codegraph_callers` are the primary code-read tool, not grep/Read-first) — it applies to every plan.
-
-### 2. Orchestrator checks the plan for full structure fulfillment
-
-A plan missing a section the downstream implementer depends on is INCOMPLETE. In a past run the plan subagent omitted the **Parallel waves** block under `## Implementation Order`, the orchestrator did not catch it, and the implementer orchestrator (`/deepseek-orchestrate`, which hands off one wave at a time and treats each wave's file list as its authority boundary) could not run. Do not trust the subagent's summary that "the plan is complete." Open the plan file and verify EACH section the implementer consumes is present AND complete:
-
-| Section | Present check | Completeness check |
-|---------|---------------|--------------------|
-| `## Read first` | orchestrator just wrote it (duty 1) | union of all pipeline docs + load-bearing reason per bullet + CodeGraph-first line |
-| `## Files` | Create + Modify tables | every touched file named with its test file (basename-strict); no "etc." / "and friends" |
-| `## Implementation Order` | dependency graph present | **MUST contain a "Parallel waves" sub-block**: tasks grouped into ordered waves (A, B, C…), each wave's tasks touch DISJOINT files (verified against ## Files), critical path named. A bare linear arrow chain with no waves block = INCOMPLETE — re-dispatch or append the waves block in the main thread. |
-| `## Delegation Authority` | per-step owner-role table | each step's owner + cross-phase boundary notes (e.g. P3-owns-X / P5-consumes) if any |
-| `## Rules Applied` | PROJ-* + inline invariants | every active constraint from the phase-start `writ-project-rules.sh list` that bears on this feature, with a "why it applies" one-liner |
-| `## Capabilities` | unchecked `- [ ]` | every spec Component ID mapped to a Task; the Self-Review coverage table is the cross-check |
-| `## Steps` | `### Task N` / `### Step N` with `- [ ]` | TDD test→fail→implement→run-pass→commit rhythm per step; no "Phases" misnamed as "Steps" |
-| `## E2E Done Criteria` (medium/heavy) | present | a REAL live-stack walkthrough (start dev+worker → observed UI/logs/DB signals), mapped to ## Capabilities IDs — not a restatement of unit tests |
-| `## Open Questions` + `## Out of Scope` | present | OQs resolved-or-flagged; scope fences explicit |
-
-**If ANY section is missing or incomplete:** do NOT auto-proceed to the phase-transition gate. Either (a) re-dispatch the plan subagent with the exact gap named ("the ## Implementation Order block has no Parallel waves sub-block — add waves A/B/C with disjoint-file verification against ## Files"), or (b) if the gap is mechanical (a missing sub-block the orchestrator can derive from ## Files + the dependency graph, e.g. the waves block), append it in the main thread. Re-verify after the fix. Cap re-dispatches at 2 on the same gap; after that, fix it in the main thread.
-
-**The Parallel-waves check is non-negotiable** because it is the contract `/deepseek-orchestrate` consumes: that skill hands off one wave at a time and uses each wave's file list as the authority boundary for its subagents. A waveless plan cannot be driven by it. This is why the orchestrator — not the plan subagent — must confirm the waves block exists and is disjoint-file-verified.
-
-This gate replaces the generic "review gate" step 3 of the loop FOR THE PLAN PHASE ONLY — it is the plan-specific review gate.
-
----
-
 ## Destination folders (where each artifact lands)
 
 | Artifact | Folder |
 |----------|--------|
 | draft (input) | `docs/AI_artifacts/0_draft/` |
+| landmine scout (prior art) | `docs/AI_artifacts/0_scout/` |
 | design doc | `docs/AI_artifacts/1_design/` |
 | success criteria | `docs/AI_artifacts/1.5_usability_test/` |
 | spec | `docs/AI_artifacts/2_specs/` |
@@ -299,8 +287,6 @@ Do this once, at the end — not per step (per-step writes churn STATE.md mid-fe
 
 Fill the `<...>` slots. Always give **absolute** skill and artifact paths. Always end with "defer questions, do not ask; return a ≤1-page summary." Every dispatch MUST also tell the subagent: when `.codegraph/` exists, use CodeGraph (`codegraph_explore`/`codegraph_node`/`codegraph_callers`) as the primary explore tool — grep/bash/Read only to view raw code after a codegraph query, or for non-code files.
 
-Every dispatch MUST also carry the **write-discipline guard** (subagents can end their turn narrating intent — "now writing" / "let me write" — without emitting the Write tool call, leaving the artifact unwritten; the result message then reads as if the write is pending). Instruct the subagent: (a) its first artifact-producing action MUST be a `Write` tool call to the destination path — not a Read, not a codegraph call, not a sentence describing intent; (b) the phrases "now writing", "let me write", "about to write", "I'll write the plan next" are forbidden — they indicate the Write was not emitted; (c) if a `Write` is denied by a hook (e.g. a Writ plan-gate), paste the exact denial text verbatim instead of silently moving on; (d) for large artifacts (plans ~40KB+), write incrementally — first `Write` the header + first sections, then `Edit`-append the rest — rather than emitting the whole file in one Write call.
-
 ### design (heavy tier — full code read, full implications)
 
 ```
@@ -321,6 +307,10 @@ The design doc MUST contain these ## sections (enforced by the validate-design-d
 Update CONTEXT.md for any new term.
 If the decision is hard-to-reverse + surprising + a real trade-off, write an ADR to docs/architecture/system_adr/.
 Non-coder readable is the default (plain English leads, code in sub-bullets, glossary table).
+CARRY-FORWARD (two extra outputs for the downstream steps):
+  1. ## Read-set — the file:line set you actually surveyed. Spec gets this as a warm-start hint so it does not re-survey from zero.
+  2. ## Assumptions to verify — factual claims about the code that research must check (each: claim + file:line + why it matters). Keep DISTINCT from ## Risks (could-go-wrong) and ## Open Questions (undecided) — an assumption is a checkable factual claim. This list is a FLOOR for research, never a ceiling.
+DEPENDENCY CONTEXT (from Phase -2): upstream deps were read FULL (build against their real contracts); downstream consumers are CONSUMER-ONLY (note the contract this phase must expose, do not design their internals). <paste resolved upstream set + downstream contract note>.
 Defer any decision into the doc's "Open questions" — do NOT ask me. Return a ≤1-page summary + any deferred questions.
 ```
 
@@ -349,6 +339,10 @@ Write the design doc to "docs/AI_artifacts/1_design/<slug>.md".
 The design doc MUST contain these ## sections (enforced by the validate-design-doc gate): ## Summary, ## Constraints, ## Alternatives Considered (name >=2), ## Chosen Approach, ## Risks (each with a mitigation), ## Open Questions. Each section except Open Questions >=50 words; no TODO/TBD/placeholder text.
 Update CONTEXT.md for any new term.
 Non-coder readable is the default.
+CARRY-FORWARD (two extra outputs for the downstream steps):
+  1. ## Read-set — the file:line set you actually surveyed. Spec gets this as a warm-start hint so it does not re-survey from zero.
+  2. ## Assumptions to verify — factual claims about the code that research must check (each: claim + file:line + why it matters). Keep DISTINCT from ## Risks and ## Open Questions. This list is a FLOOR for research, never a ceiling.
+DEPENDENCY CONTEXT (from Phase -2): upstream deps read FULL; downstream consumers CONSUMER-ONLY (note the contract this phase must expose). <paste resolved upstream set + downstream contract note>.
 Defer any decision into the doc's "Open questions" — do NOT ask me. Return a ≤1-page summary + any deferred questions.
 ```
 
@@ -358,6 +352,8 @@ Defer any decision into the doc's "Open questions" — do NOT ask me. Return a �
 NON-INTERACTIVE: true
 Follow the skill at ~/.claude/skills/writing-detailed-specs/SKILL.md.
 Inputs: design doc at "docs/AI_artifacts/1_design/<slug>.md"; repo root <abs path> (read CLAUDE.md + referenced files).
+WARM START: the design doc's ## Read-set lists the file:line set already surveyed — start from those, do NOT re-survey the codebase from zero. Read beyond them only where decomposition into buildable components requires it.
+CARRY the design doc's ## Assumptions to verify forward INTO the spec verbatim (as spec assumption rows) so research checks them — they are a FLOOR, not a ceiling; add any new assumption your decomposition introduces.
 
 Write the spec to "docs/AI_artifacts/2_specs/<slug>.md". Non-coder readable is the default.
 Defer questions into the spec; do NOT ask me. Return a ≤1-page summary + deferred questions.
@@ -371,6 +367,8 @@ Follow the skill at ~/.claude/skills/research/SKILL.md.
 Verify the spec at "docs/AI_artifacts/2_specs/<slug>.md" against the ACTUAL code in repo root <abs path>.
 Do NOT trust the spec's claims, line numbers, or any "pre-validated" label — open the real files and confirm
 each assumption at the depth its claim requires (behavior claims need behavior reading, not a signature grep).
+The spec's "Assumptions to verify" list (carried from design) is a FLOOR, not a ceiling: verify every item on it AND any
+assumption it omits that you find while reading. Treat the list itself as a "pre-validated label" — distrust it, never let it bound your scope.
 
 Write findings to "docs/AI_artifacts/3_research/<slug>.md", including the Spec Verification table
 and Invalidated Assumptions section if any assumption is false. Non-coder readable.
@@ -401,13 +399,6 @@ on each step's touched symbols — not from inference (the impact-analyzer hook 
 blast-radius when you Read the spec/plan). ## E2E Done Criteria = a real end-user/QC walkthrough on the
 LIVE stack with observed signals (logs/DB/UI), mapped to the ## Capabilities IDs — not a restatement of unit tests.
 
-Do NOT write a `## Read first` section — the orchestrator writes that after your return (it has the full
-interview→design→spec→research doc landscape; you only see spec + research and will miss docs you never opened).
-## Implementation Order MUST include a "Parallel waves" sub-block: tasks grouped into ordered waves (A, B, C…),
-each wave's tasks touch DISJOINT files (verify against ## Files), critical path named. A bare linear dependency
-chain with no waves block is INCOMPLETE — the downstream implementer orchestrator hands off one wave at a time
-and uses each wave's file list as its authority boundary, so a waveless plan cannot be driven.
-
 Write the plan to "docs/AI_artifacts/4_plans/<slug>.md". Non-coder readable is the default.
 Do NOT run plan-from-specs Step 6 (the mid-session STATE.md write) — the orchestrator updates STATE.md once at pipeline end.
 Return a ≤1-page summary + any open questions.
@@ -434,11 +425,7 @@ Write the COMPLETE plan file in ONE Write call using plan-from-specs' Step 4 tem
 ## Capabilities sections are REQUIRED by Writ's plan-gate. A partial file is INCOMPLETE.
 (## E2E Done Criteria is OPTIONAL for tiny tier — a 1–2-file change rarely needs a full live walkthrough;
 include it only if the change has an observable end-user effect. ## Implementation Order may be trivial for
-a 1-step tiny plan — keep it but it can be one line — but if there is >1 task, still group them into waves
-with disjoint-file verification; the implementer orchestrator consumes waves regardless of tier.)
-
-Do NOT write a `## Read first` section — the orchestrator writes that after your return (even for tiny, it
-owns the doc landscape: mini-spec + CLAUDE.md + any TD/OQ the phase-start scan folded in).
+a 1-step tiny plan — keep it but it can be one line.)
 
 Write the plan to "docs/AI_artifacts/4_plans/<slug>.md". Non-coder readable is the default.
 Do NOT run plan-from-specs Step 6.
@@ -460,6 +447,12 @@ Return a ≤1-page summary + any open questions + tier escalation if triggered.
 | "I'll update STATE.md after each step." | End of pipeline only — per-step churns it. |
 | "I'll dump the file:line stuff in the lead sentence." | Non-coder first — plain English leads, code in parentheses (rule 6). |
 | "This looks tiny, skip the interview." | Interview ALWAYS runs first. Tiny things have hidden landmines. |
+| "Roadmap says tier A, so the tier is settled — skip/shrink the interview." | Phase -2 roadmap read is a scout TRIGGER, not a tier decision. The interview still runs all 7 steps and owns the tier. |
+| "Scout every phase for prior art." | Scout is GATED — tier A or named landmine only. Scouting a tier-C additive phase wastes tokens. |
+| "The scout subagent's prose summary is enough." | It must return source URLs + raw quotes too. Prose-only over-compresses and hides the load-bearing option. |
+| "Downstream consumer phase depends on this — read it deep." | Consumer-only. Note the contract it'll touch; do not survey its internals (it's usually not built yet). |
+| "Spec should re-survey the codebase fresh." | Warm-start from the design doc's ## Read-set; only read beyond it where decomposition needs it. |
+| "Design's Assumptions-to-verify list bounds what research checks." | It's a FLOOR, not a ceiling. Research verifies beyond it and distrusts the list itself (rule 3). |
 | "I'll conduct the Phase -1 interview myself instead of invoking /grill." | WRONG. Phase -1 MUST use `/grill` via Skill tool. Never substitute your own interview. |
 | "I'll classify the tier before understanding the request." | Tier classification comes AFTER Phase -1 interview. Not before. |
 | "I already know this is tiny — the interview won't change anything." | That's pre-classifying. The interview generates the evidence for the tier, not confirms your guess. |
@@ -467,10 +460,6 @@ Return a ≤1-page summary + any open questions + tier escalation if triggered.
 | "Steps 2 and 4 aren't needed for something this simple." | All 7 steps required. No compression. Term-sharpening and edge cases are WHERE landmines surface. |
 | "The review gate went well, I'll just dispatch the next phase." | Phase transition gate is required. Output the transition message and wait for confirmation first. |
 | "Tiny doesn't need success criteria in the inventory." | Every tier writes to behavior_inventory.yaml. Orchestrator does it for tiny. |
-| "The subagent's summary says it wrote the plan, so I'll proceed." | Verify the file exists on disk first (rule 7). A subagent can narrate "now writing" and end its turn without calling Write — the summary then lies about completion. |
-| "The plan subagent wrote `## Read first`, so it's covered." | No — the orchestrator writes `## Read first`. The subagent only saw spec+research; it missed the ADRs, grill notes, TD/OQ scan, online_research the orchestrator saw. Orchestrator owns this section. |
-| "The plan has an `## Implementation Order` section, so it's complete." | Not enough — open it and confirm a "Parallel waves" sub-block exists (ordered waves, disjoint files, critical path). A bare linear chain with no waves is INCOMPLETE; `/deepseek-orchestrate` cannot drive a waveless plan. |
-| "The plan subagent's summary says all sections are present." | Trust but verify — open the plan file and run the Plan completion gate table. The subagent has reported its own work complete while omitting waves before. |
 
 ---
 
@@ -486,5 +475,4 @@ If a summary is internally inconsistent, the counts look off, or two artifacts c
 - **Forgetting to restate the destination path in the dispatch prompt.** A cold subagent should never guess where to write.
 - **Letting implementation-origin entries override design-origin entries in behavior_inventory.yaml.** Cross-origin conflicts get flagged, not auto-resolved. See update-behavior-guide conflict rules.
 - **Not writing success criteria for tiny tier.** Orchestrator writes them to behavior_inventory.yaml before dispatching plan. Don't skip this.
-- **Letting the plan subagent write `## Read first`.** Orchestrator owns it — it has the full pipeline doc landscape; the subagent has spec+research only. A subagent-written `## Read first` misses ADRs, grill notes, TD/OQ, online_research.
-- **Skipping the Plan completion gate after the plan dispatch.** Open the plan file and verify every implementer-consumed section is present AND complete — especially the `## Implementation Order` "Parallel waves" sub-block. A waveless plan stalls `/deepseek-orchestrate`, which hands off one wave at a time.
+- **Folding scout findings into the research step.** Scout (`0_scout/`) is internet prior art; the research step trusts only THIS codebase. Three separate lanes (scout / `online_research` API facts / research) — never merge.
