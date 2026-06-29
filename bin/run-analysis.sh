@@ -560,6 +560,53 @@ AUTH_GUARD = re.compile(
     r"|permission_classes\s*=\s*\[",
     re.IGNORECASE,
 )
+# B26: a route may authenticate by a MANUAL call rather than a decorator /
+# Depends(...) -- e.g. `principal = await validate_api_key(db, x_api_key)`
+# followed by a 401 on missing/invalid (mirrors Iris api/ingest.py /
+# api/query.py). The decorator-only check false-flagged these as unauthed and
+# HARD-BLOCKED the write (ENF-POST-007). Recognize three manual-auth signals:
+#   (1) a call to a known validator inside the handler body, OR
+#   (2) a credential header read (X-API-Key / Authorization / token) AND a
+#       401 / Unauthorized raise in the same body, OR
+#   (3) a per-route `# writ:manual-auth` escape directive on the decorator
+#       line or first body line (operator asserts a reviewed manual-auth route
+#       the heuristics still miss).
+MANUAL_AUTH = re.compile(
+    r"\b(?:validate_api_key|verify_api_key|verify_token|verify_credentials|"
+    r"authenticate_request|authenticate|check_auth|require_auth|require_admin|"
+    r"require_role|get_current_user|current_user|resolve_principal|"
+    r"authorize_request|is_authorized)\s*\(",
+    re.IGNORECASE,
+)
+CRED_HEADER = re.compile(
+    r"\b(?:X-API-Key|X-Auth-Token|Authorization|api_?key|access_?token|bearer)\b",
+    re.IGNORECASE,
+)
+UNAUTHORIZED = re.compile(
+    r"\b401\b|HTTPException\s*\([^)]*401|abort\s*\(\s*401|"
+    r"status_code\s*[:=]\s*401|raise\s+(?:Unauthorized|AuthenticationError|"
+    r"NotAuthenticated)|return\s+.*\b401\b",
+    re.IGNORECASE,
+)
+# Handler body = stacked decorators + def header + indented body, stopping at
+# the next top-level statement. Wider than the old 6-line window so a manual
+# auth call deeper in the body is seen.
+def _handler_body(lines, i):
+    j = i
+    while j < len(lines) and lines[j].lstrip().startswith("@"):
+        j += 1
+    while j < len(lines) and lines[j].strip() == "":
+        j += 1
+    if j < len(lines) and re.match(r"\s*(async\s+)?def\s", lines[j]):
+        j += 1
+    while j < len(lines):
+        ln = lines[j]
+        if ln == "" or ln.startswith((" ", "\t")) or ln.lstrip().startswith(("#", "//")):
+            j += 1
+            continue
+        break
+    return "\n".join(lines[i:j])
+
 # B29/unblock: a file-level `# writ:noauth` directive asserts the module is an
 # intentionally auth-less service (e.g. the Writ RAG daemon is localhost-only,
 # bound to 127.0.0.1 -- B17). When present, skip the missing-auth-decorator
@@ -570,10 +617,17 @@ _noauth_directive = any("writ:noauth" in _l for _l in lines)
 if not _noauth_directive:
     for i, line in enumerate(lines):
         if ROUTE_DECORATOR.search(line):
-            window = "\n".join(lines[max(0, i - 1): min(len(lines), i + 6)])
-            if not AUTH_GUARD.search(window):
+            body = _handler_body(lines, i)
+            if "writ:manual-auth" in body:
+                continue
+            authed = (
+                AUTH_GUARD.search(body)
+                or MANUAL_AUTH.search(body)
+                or (CRED_HEADER.search(body) and UNAUTHORIZED.search(body))
+            )
+            if not authed:
                 emit(i + 1, "SEC-AUTHZ-ENFORCE-001", "missing-auth-decorator",
-                     "Route handler without explicit auth check (login_required / Depends(auth) / permission_classes): "
+                     "Route handler without explicit auth check (login_required / Depends(auth) / permission_classes / manual validate_api_key + 401 / # writ:manual-auth): "
                      "endpoints default to deny per SEC-AUTHZ-DEFAULT-001", "error")
 
 # SEC-VAL-SERVER-001: handler reads request body without an intervening

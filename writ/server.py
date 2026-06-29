@@ -50,6 +50,17 @@ if _WRIT_SESSION_PATH.exists():
 else:
     writ_session = None  # type: ignore[assignment]
 
+# B27: load bin/lib/project_rules.py so the daemon can author PROJ- constraints
+# in-process (it already owns the graph lock -- a second direct _connect() from
+# the CLI collides with it, B27). Loaded via importlib exactly like writ_session.
+_PROJECT_RULES_PATH = Path(__file__).resolve().parent.parent / "bin" / "lib" / "project_rules.py"
+if _PROJECT_RULES_PATH.exists():
+    _spec_pr = importlib.util.spec_from_file_location("writ_project_rules", str(_PROJECT_RULES_PATH))
+    _project_rules = importlib.util.module_from_spec(_spec_pr)  # type: ignore[arg-type]
+    _spec_pr.loader.exec_module(_project_rules)  # type: ignore[union-attr]
+else:
+    _project_rules = None  # type: ignore[assignment]
+
 
 
 
@@ -126,6 +137,29 @@ class ConflictsRequest(BaseModel):
     """Request body for /conflicts endpoint."""
 
     rule_ids: list[str]
+
+
+class AuthorProjectRuleRequest(BaseModel):
+    """Request body for /author-project-rule (B27).
+
+    Human-authority PROJ- constraint authoring routed through the daemon so
+    the single-writer graph lock is held by the daemon itself (no CLI
+    direct-connect deadlock). Mirrors project_rules.REQUIRED_FIELDS.
+    """
+
+    rule_id: str
+    domain: str
+    severity: str
+    scope: str
+    trigger: str
+    statement: str
+    violation: str
+    pass_example: str
+    enforcement: str
+    rationale: str
+    source_attribution: str | None = None
+    force: bool = False
+    rules_dir: str = "docs/rules"
 
 
 # Module-level state set during lifespan.
@@ -271,6 +305,38 @@ async def propose_rule_endpoint(request: ProposeRequest) -> dict[str, Any]:
         task_description=request.task_description,
         query_that_triggered=request.query_that_triggered,
     )
+    return result
+
+
+@app.post("/author-project-rule")
+async def author_project_rule(request: AuthorProjectRuleRequest) -> dict[str, Any]:
+    """Author a human-authority PROJ- constraint IN-PROCESS (B27).
+
+    The daemon owns the graph lock; routing authoring here avoids the CLI's
+    direct-_connect() deadlock against a live daemon. Delegates to
+    project_rules._author (gate-check + ingest + export). The daemon CWD is
+    the repo root (per-repo spawn, B17), so the default rules_dir="docs/rules"
+    resolves against the repo.
+    """
+    if _db is None:
+        return {"error": "Pipeline not initialized. Run writ serve."}
+    if _project_rules is None:
+        return {"error": "Project-rule engine unavailable (bin/lib/project_rules.py not found)."}
+    candidate = {
+        "rule_id": request.rule_id,
+        "domain": request.domain,
+        "severity": request.severity,
+        "scope": request.scope,
+        "trigger": request.trigger,
+        "statement": request.statement,
+        "violation": request.violation,
+        "pass_example": request.pass_example,
+        "enforcement": request.enforcement,
+        "rationale": request.rationale,
+    }
+    if request.source_attribution:
+        candidate["source_attribution"] = request.source_attribution
+    result = await _project_rules._author(_db, candidate, Path(request.rules_dir), request.force)
     return result
 
 

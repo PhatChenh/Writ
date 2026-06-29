@@ -25,7 +25,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import date
 from pathlib import Path
 
@@ -65,6 +69,41 @@ def _connect() -> FalkorDBLiteConnection:
         get_falkordb_module(),
         get_redis_bin(),
     )
+
+
+def _resolve_writ_port() -> int:
+    """Mirror bin/lib/common.sh per-repo port derivation so the HTTP-client
+    `author-http` path hits the same daemon the hooks do (B27). WRIT_PORT_OVERRIDE
+    wins; else 8765 + cksum(repo_root) % 1000. cksum is shelled out (NOT
+    reimplemented) so the hash matches bash's POSIX cksum byte-for-byte -- a
+    mismatch sends the POST to the wrong port (B1/B2 class). Mirrors
+    writ-session.py:_resolve_writ_port exactly.
+    """
+    override = os.environ.get("WRIT_PORT_OVERRIDE")
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            pass
+    repo_root = os.environ.get("WRIT_REPO_ROOT") or ""
+    if not repo_root:
+        try:
+            repo_root = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                stderr=subprocess.DEVNULL,
+            ).decode().strip()
+        except Exception:
+            repo_root = os.getcwd()
+    repo_root = repo_root.rstrip("/")  # B3 trailing-slash normalization
+    try:
+        out = subprocess.run(
+            ["cksum"], input=repo_root.encode(),
+            capture_output=True, check=True,
+        ).stdout.decode()
+        h = int(out.split()[0])
+    except Exception:
+        h = 0
+    return 8765 + h % 1000
 
 
 def _is_project_rule(rule: dict) -> bool:
@@ -161,11 +200,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    a = sub.add_parser("author", help="Gate-check + ingest one constraint, then export.")
-    for f in REQUIRED_FIELDS:
-        a.add_argument(f"--{f.replace('_', '-')}", required=True)
-    a.add_argument("--source-attribution", default=None, help="e.g. ADR-0007 for a rule extracted from an ADR.")
-    a.add_argument("--force", action="store_true", help="Ingest even if the gate rejects (records reasons).")
+    a = sub.add_parser("author", help="Gate-check + ingest one constraint, then export (direct graph connection; fails if the per-repo daemon holds the lock -- use author-http when a daemon is live).")
+    _add_author_args(a)
+
+    # B27: HTTP-client form of `author`. Resolves the per-repo port + POSTs to
+    # the daemon's /author-project-rule endpoint so the daemon (which owns the
+    # graph lock) authors in-process -- no direct-connect deadlock, no daemon
+    # bounce. The shell front-end (writ-project-rules.sh) routes to this when a
+    # daemon is live; falls back to direct `author` when none is up.
+    ah = sub.add_parser("author-http", help="Author via the running daemon's HTTP API (no graph-lock conflict).")
+    _add_author_args(ah)
 
     sub.add_parser("export", help="Write all PROJ- rules to the export dir.")
 
@@ -175,6 +219,14 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _add_author_args(a: argparse.ArgumentParser) -> None:
+    """Shared args for `author` (direct) and `author-http` (HTTP client)."""
+    for f in REQUIRED_FIELDS:
+        a.add_argument(f"--{f.replace('_', '-')}", required=True)
+    a.add_argument("--source-attribution", default=None, help="e.g. ADR-0007 for a rule extracted from an ADR.")
+    a.add_argument("--force", action="store_true", help="Ingest even if the gate rejects (records reasons).")
+
+
 def _candidate_from_args(args: argparse.Namespace) -> dict:
     c = {f: getattr(args, f) for f in REQUIRED_FIELDS}
     if not c["rule_id"].startswith(PROJECT_PREFIX):
@@ -182,6 +234,37 @@ def _candidate_from_args(args: argparse.Namespace) -> dict:
     if args.source_attribution:
         c["source_attribution"] = args.source_attribution
     return c
+
+
+def _author_http(candidate: dict, rules_dir: Path, force: bool) -> int:
+    """POST the candidate to the daemon's /author-project-rule endpoint (B27).
+
+    The daemon owns the graph lock and authors in-process -> no direct-connect
+    deadlock against a live daemon. Prints the daemon's JSON result and returns
+    0 if accepted, 1 if the gate rejected, 2 if the daemon is unreachable.
+    """
+    port = _resolve_writ_port()
+    url = f"http://127.0.0.1:{port}/author-project-rule"
+    body = {
+        **{f: candidate[f] for f in REQUIRED_FIELDS},
+        "source_attribution": candidate.get("source_attribution"),
+        "force": force,
+        "rules_dir": str(rules_dir),
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        print(json.dumps({"error": f"daemon unreachable at {url}: {e}"}, indent=2))
+        return 2
+    print(json.dumps(result, indent=2, default=str))
+    return 0 if result.get("accepted") else 1
 
 
 def _print_constraints(rules: list[dict]) -> None:
@@ -204,6 +287,11 @@ def main(argv: list[str] | None = None) -> int:
     rules_dir = Path(args.rules_dir)
 
     async def _run() -> int:
+        if args.cmd == "author-http":
+            # B27: do NOT open a direct graph connection -- the daemon owns the
+            # lock and a second _connect() would deadlock. POST to it instead.
+            candidate = _candidate_from_args(args)
+            return _author_http(candidate, rules_dir, args.force)
         db = _connect()
         try:
             if args.cmd == "author":

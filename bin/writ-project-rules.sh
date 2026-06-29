@@ -88,7 +88,21 @@ do_seed() {
 
 CMD="${1:-}"
 case "$CMD" in
-    author|export|list)
+    author)
+        # B27: route through the daemon's HTTP /author-project-rule endpoint
+        # when a daemon is live so the daemon (which owns the graph lock)
+        # authors in-process -- no direct-connect deadlock, no daemon bounce,
+        # no disruption to concurrent sessions using the same daemon. Fall back
+        # to direct `author` only when no daemon is up (no lock holder). $@
+        # here is `author --rule-id ...`; shift drops the subcommand name.
+        shift
+        if daemon_up; then
+            run_engine author-http "$@"
+        else
+            run_engine author "$@"
+        fi
+        ;;
+    export|list)
         with_daemon_paused run_engine "$@"
         ;;
     seed)
