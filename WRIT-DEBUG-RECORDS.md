@@ -401,6 +401,34 @@ the re-observed gate-deny / phase-reset / SID-mismatch class. B13–B16 are new 
 
 ---
 
+## Session 2026-06-29 — Iris Phase 6 orchestration (Claude driving deepseek; code in git worktrees). Reporter observations, NOT yet fixed.
+
+### B26 — Auth-scanner (`ENF-POST-007` / writ-auth-scan/missing-auth-decorator) false-positive hard-BLOCKS Edits to a route file that authenticates manually
+
+**Failure signature:** Editing `api/query.py` (Iris, the Phase-6 REST surface) via the Edit tool returned a **pre-write hard block**:
+`[ENF-POST-007] Pre-write validation errors … writ-auth-scan/missing-auth-decorator: Route handler without explicit auth check (login_required / Depends(auth) / permission_classes): endpoints default to deny per SEC-AUTHZ-DEFAULT-001`.
+
+**Reality:** the file's `@router.post("/query")` handler **is** authenticated — it reads `X-API-Key` via FastAPI `Header(...)` and calls `principal_id = await validate_api_key(db, x_api_key)`, returning 401 on missing/invalid (mirrors the existing, already-shipped `api/ingest.py`). The scanner only recognizes decorator-style auth (`Depends(auth)`/`login_required`/`permission_classes`) and not a **manual per-route auth call**, so it false-flags the route as unauthed and **blocks the write entirely** (not advisory — the Edit tool returned the error and did not write).
+
+**Impact:** blocked a legitimate security improvement (adding an empty-query guard to the shared `run_query` core, which lives in the same file) → had to defer it (logged as Iris TD-17). More broadly: this makes `api/query.py` (and any route that authenticates by a manual call rather than a decorator) **effectively read-only to the Edit tool** for the rest of the session. The same pattern already shipped in `api/ingest.py` without issue, so the gate is inconsistent (it fired on the new file, presumably because the Edit touched it).
+
+**Suggested fix:** teach writ-auth-scan to recognize a manual auth call inside the handler body (a call to a known validator like `validate_api_key`/`authenticate`/`current_user`, or a 401 raise gated on a credential header) as satisfying the auth requirement; OR support a per-file/per-route `writ:noauth`-style directive (the same escape hatch B20/server.py uses) so a reviewed manual-auth route isn't a permanent write-block. A hard block on a false positive is worse than an advisory — it stopped a security fix from landing.
+
+### B27 — `writ-project-rules.sh author` cannot write while the writ session daemon holds the graph DB lock (no HTTP fallback)
+
+**Failure signature:** `bash writ-project-rules.sh author --rule-id PROJ-RLS-001 …` aborted with:
+`RuntimeError: Writ graph DB is locked by PID 70887. Stop the server or use the HTTP API.` (traceback through `bin/lib/project_rules.py:_run → _connect → FalkorDBLiteConnection.__init__ → _acquire_lock`).
+
+**Root cause:** the running writ session daemon (the one serving RAG injection for this repo) holds the FalkorDB-lite lock on the graph; `author` tries to open a **second** direct connection to the same on-disk graph and can't acquire the lock. The error text itself says "use the HTTP API" — but the `author` CLI has **no** HTTP-API fallback path; it only does a direct `_connect()`.
+
+**Impact:** could not author a new project rule (PROJ-RLS-001) mid-session while the daemon was up; the call only succeeded on a **later retry** once the lock happened to be free. An operator can't reliably author rules without racing/stopping their own session daemon.
+
+**Suggested fix:** make `writ-project-rules.sh author` (and the other graph-mutating subcommands) route through the running daemon's HTTP API when a daemon is live (it already knows the per-repo port = `8765 + cksum(repo_root)%1000`), falling back to a direct connection only when no daemon is up. As-is, the "or use the HTTP API" advice is unactionable from the CLI.
+
+**Note (already known, not re-filed):** the codegraph-gate PreToolUse hook blocking `Read` on `.py` while codegraph can't satisfy the gate is the same class as B12 / `docs/writ-bugs-2026-06-23.md`'s tool-note — not re-reported here.
+
+---
+
 ## Recurring fix checklist (when you change any hook/script)
 
 1. Edit the file in the **repo**.
