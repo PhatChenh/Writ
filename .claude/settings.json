@@ -8,6 +8,11 @@
             "type": "command",
             "command": "python3 $HOME/.codegraph-piggyback/codegraph_adoption/codegraph-gate.py",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 $HOME/01_all_projects/codegraph-piggyback/codegraph-gate/codegraph-gate.py",
+            "timeout": 5
           }
         ]
       }
@@ -19,6 +24,21 @@
           {
             "type": "command",
             "command": "python3 $HOME/.codegraph-piggyback/codegraph_adoption/codegraph-gate.py",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 $HOME/01_all_projects/codegraph-piggyback/codegraph-gate/codegraph-gate.py",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 $HOME/01_all_projects/codegraph-piggyback/ssot-diagram/decision_hook.py",
             "timeout": 5
           }
         ]

@@ -10,7 +10,7 @@ description: Use when a design decision has been made and needs to be turned int
 
 Turn a design decision (with selected option and implications) into a phase spec that another AI or developer can pick up for research and detailed planning.
 
-**This skill writes SPECS, not plans.** A spec says WHAT to build, in what order, and what's already done. A plan says HOW to build each piece (exact code, tests, commits). Specs feed into `/research` and `/plan` — they don't replace them.
+**This skill writes SPECS, not plans.** A spec says WHAT to build, in what order, and what's already done. A plan says HOW to build each piece (exact code, tests, commits). Specs feed into `/factual-code-verification` and `/plan` — they don't replace them.
 
 **REQUIRED UPSTREAM:** Uses codebase-design-analysis (or equivalent brainstorm output) as input. Does not run design analysis itself — expects the option to be already selected and implications already explored.
 
@@ -229,7 +229,7 @@ things the spec author is uncertain about.]
 
 **Next step** (output after writing the doc):
 
-"Spec written. Run `/research` to verify spec assumptions against real code before planning."
+"Spec written. Run `/factual-code-verification` to verify spec assumptions against real code before planning."
 
 ---
 

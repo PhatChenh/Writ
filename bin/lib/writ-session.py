@@ -9,8 +9,10 @@ Stdlib only -- no external dependencies.
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import threading
 from datetime import datetime, timezone
 
 def _log_friction_event(session_id: str, mode: str | None, event: str, **extra: object) -> None:
@@ -95,6 +97,10 @@ def _read_cache(session_id: str) -> dict:
         "playbook_phase_history": [],
         "review_ordering_state": {},
         "verification_evidence": {},
+        # B26: prior TodoWrite snapshot (ordered list of {key,status}) used by
+        # the ENF-PROC-VERIFY-001 gate to gate only on pending->completed
+        # transitions, not on already-completed items re-sent after a reword.
+        "last_todos": [],
         # Phase 3: per-session phase-advance audit trail with confirmation_source
         # per plan Section 8 deliverable 3.
         "phase_transitions": [],
@@ -139,6 +145,7 @@ def _read_cache(session_id: str) -> dict:
         data.setdefault("playbook_phase_history", [])
         data.setdefault("review_ordering_state", {})
         data.setdefault("verification_evidence", {})
+        data.setdefault("last_todos", [])
         data.setdefault("quality_judgment_state", {})
         data.setdefault("quality_override_count", 0)
         data.setdefault("always_on_budget", DEFAULT_ALWAYS_ON_CAP)
@@ -150,10 +157,23 @@ def _read_cache(session_id: str) -> dict:
 
 def _write_cache(session_id: str, data: dict) -> None:
     path = _cache_path(session_id)
-    tmp_path = path + ".tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(data, f)
-    os.rename(tmp_path, path)
+    # Per-writer tmp name: concurrent hook processes writing the SAME session_id
+    # (rag-inject + context-watcher both POST /context-percent in one turn)
+    # previously shared a single "<path>.tmp" and raced -- one writer's rename
+    # deleted it out from under the other -> FileNotFoundError on os.rename
+    # -> 500 on /context-percent (B23). A tmp name unique per process AND
+    # thread removes the shared-file race; os.replace is atomic + overwrites.
+    tmp_path = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp_path, path)
+    except OSError:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def cmd_read(session_id: str) -> None:
@@ -1985,10 +2005,120 @@ def cmd_metrics(log_path: str = "") -> None:
     sys.stdout.write("\n")
 
 
+def _resolve_writ_port() -> int:
+    """Mirror bin/lib/common.sh per-repo port derivation so a CLI caller hits
+    the same daemon the hooks do. WRIT_PORT_OVERRIDE wins; else
+    8765 + cksum(repo_root) % 1000. cksum is shelled out (NOT reimplemented in
+    Python) so the hash matches bash's POSIX cksum exactly -- a mismatch sends
+    the POST to the wrong port (B1/B2 class). repo_root comes from
+    WRIT_REPO_ROOT (trailing-slash normalized per B3) or `git rev-parse`."""
+    override = os.environ.get("WRIT_PORT_OVERRIDE")
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            pass
+    repo_root = os.environ.get("WRIT_REPO_ROOT") or ""
+    if not repo_root:
+        try:
+            repo_root = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                stderr=subprocess.DEVNULL,
+            ).decode().strip()
+        except Exception:
+            repo_root = os.getcwd()
+    repo_root = repo_root.rstrip("/")  # B3 trailing-slash normalization
+    try:
+        out = subprocess.run(
+            ["cksum"], input=repo_root.encode(),
+            capture_output=True, check=True,
+        ).stdout.decode()
+        h = int(out.split()[0])
+    except Exception:
+        h = 0
+    return 8765 + h % 1000
+
+
+def cmd_verification_evidence(session_id: str, args: list[str]) -> None:
+    """POST verification evidence to the per-repo daemon's
+    /session/{sid}/verification-evidence route (B27).
+
+    Mirrors the HTTP route the ENF-PROC-VERIFY-001 gate message names, so an
+    operator can record evidence without reverse-engineering the port + endpoint
+    + body shape. Resolves the per-repo port the same way the hooks do.
+
+    Usage:
+        writ-session.py verification-evidence <session_id> \
+            --todo "<id>" --command "<cmd>" --output "<excerpt>" [--exit <n>]
+
+    --todo is the todo_id the gate keys on. ENF-PROC-VERIFY-001 keys evidence by
+    `content[:40]` (TodoWrite items carry no stable id), so pass the first 40
+    chars of the todo's content exactly as the gate prints it.
+    """
+    import urllib.error
+    import urllib.request
+
+    todo = command = output = ""
+    exit_code = 0
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--todo" and i + 1 < len(args):
+            todo = args[i + 1]
+            i += 2
+        elif a == "--command" and i + 1 < len(args):
+            command = args[i + 1]
+            i += 2
+        elif a == "--output" and i + 1 < len(args):
+            output = args[i + 1]
+            i += 2
+        elif a == "--exit" and i + 1 < len(args):
+            try:
+                exit_code = int(args[i + 1])
+            except ValueError:
+                print(f"--exit must be an integer, got: {args[i + 1]!r}", file=sys.stderr)
+                sys.exit(2)
+            i += 2
+        else:
+            print(f"Unknown or missing argument: {a}", file=sys.stderr)
+            sys.exit(2)
+    if not todo:
+        print(
+            "--todo is required. Pass the todo_id the gate keys on (the todo "
+            "content's first 40 chars, exactly as the gate prints it).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    port = _resolve_writ_port()
+    url = f"http://127.0.0.1:{port}/session/{session_id}/verification-evidence"
+    body = json.dumps({
+        "todo_id": todo,
+        "command": command,
+        "output_excerpt": output,
+        "exit_code": exit_code,
+    }).encode()
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            sys.stdout.write(resp.read().decode() + "\n")
+    except urllib.error.URLError as e:
+        print(
+            f"POST to {url} failed: {e}. Is the writ daemon running on port "
+            f"{port}? (start: `writ serve` or open a session in this repo)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: writ-session.py <command> [args]", file=sys.stderr)
-        print("Commands: read, update, format, should-skip, mode, coverage, auto-feedback, can-write, advance-phase, current-phase, detect-compaction, metrics", file=sys.stderr)
+        print("Commands: read, update, format, should-skip, mode, coverage, auto-feedback, can-write, advance-phase, current-phase, detect-compaction, metrics, verification-evidence", file=sys.stderr)
         sys.exit(2)
 
     cmd = sys.argv[1]
@@ -2146,6 +2276,12 @@ def main() -> None:
             if idx + 1 < len(sys.argv):
                 log_path = sys.argv[idx + 1]
         cmd_metrics(log_path)
+
+    elif cmd == "verification-evidence":
+        if len(sys.argv) < 3:
+            print("Usage: writ-session.py verification-evidence <session_id> --todo \"<id>\" --command \"<cmd>\" --output \"<excerpt>\" [--exit <n>]", file=sys.stderr)
+            sys.exit(2)
+        cmd_verification_evidence(sys.argv[2], sys.argv[3:])
 
     else:
         print(f"Unknown command: {cmd}", file=sys.stderr)

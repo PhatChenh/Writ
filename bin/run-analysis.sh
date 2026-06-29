@@ -560,13 +560,21 @@ AUTH_GUARD = re.compile(
     r"|permission_classes\s*=\s*\[",
     re.IGNORECASE,
 )
-for i, line in enumerate(lines):
-    if ROUTE_DECORATOR.search(line):
-        window = "\n".join(lines[max(0, i - 1): min(len(lines), i + 6)])
-        if not AUTH_GUARD.search(window):
-            emit(i + 1, "SEC-AUTHZ-ENFORCE-001", "missing-auth-decorator",
-                 "Route handler without explicit auth check (login_required / Depends(auth) / permission_classes): "
-                 "endpoints default to deny per SEC-AUTHZ-DEFAULT-001", "error")
+# B29/unblock: a file-level `# writ:noauth` directive asserts the module is an
+# intentionally auth-less service (e.g. the Writ RAG daemon is localhost-only,
+# bound to 127.0.0.1 -- B17). When present, skip the missing-auth-decorator
+# scan for this file. The other security scans (mass assignment, weak hash,
+# weak RNG, body validation) still run -- this waives only the route-decorator
+# check, not the rest of the security rules.
+_noauth_directive = any("writ:noauth" in _l for _l in lines)
+if not _noauth_directive:
+    for i, line in enumerate(lines):
+        if ROUTE_DECORATOR.search(line):
+            window = "\n".join(lines[max(0, i - 1): min(len(lines), i + 6)])
+            if not AUTH_GUARD.search(window):
+                emit(i + 1, "SEC-AUTHZ-ENFORCE-001", "missing-auth-decorator",
+                     "Route handler without explicit auth check (login_required / Depends(auth) / permission_classes): "
+                     "endpoints default to deny per SEC-AUTHZ-DEFAULT-001", "error")
 
 # SEC-VAL-SERVER-001: handler reads request body without an intervening
 # schema validation call. Conservative: flag handlers that read

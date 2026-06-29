@@ -6,7 +6,7 @@ debugging "writ isn't working" — most symptoms here look different but share a
 root causes (port derivation, the plugin-cache copy, daemon lifecycle under Claude
 hooks, macOS python 3.9).
 
-Last updated: 2026-06-26.
+Last updated: 2026-06-27.
 
 ---
 
@@ -329,18 +329,92 @@ the re-observed gate-deny / phase-reset / SID-mismatch class. B13–B16 are new 
 - **Verified live (2026-06-26):** killed the 9734 daemon + redis, ran `env -u CLAUDE_PLUGIN_ROOT bash scripts/bootstrap-plugin.sh` → `daemon ready` in ~1s, `exit 0`. Spawned daemon: `PPID=1`, stdin `/dev/null`, bound `127.0.0.1:9734` (not LAN), `/health` `healthy rule_count:279 mandatory:30`, redis.log clean (no SIGTERM). Synced to `~/.claude/plugins/cache/writ/writ/1.5.0/scripts/bootstrap-plugin.sh` + `bash -n` clean. **Restart Claude Code** for any in-flight session. A future `claude plugin install` re-copies this fixed file from the repo automatically.
 - **Pre-existing cosmetic, NOT fixed (out of scope):** the ready-banner prints `Rules loaded: ?` because it reads `rule_count` from `/stats` (which has no such field) — `/health` is the source that returns `rule_count`. unrelated to this bug; left alone per surgical scope.
 
+### B22 — Iris daemon SIGTERM reap regression (B17-class) — ⚠️ DIAGNOSIS ONLY 2026-06-27
+- **Severity:** high (Iris repo has no working writ daemon from hooks; every session proceeds without rules).
+- **Symptom:** `writ-rag-inject.sh` on Iris (port 9032) logs `server down, attempting auto-start` → waits 5s → `failed: empty response from server`. Pattern repeated across at least 3 session-ids (47c317a9, 248afaff observed in rag-debug) over ~2min (08:12–08:14 log timestamps).
+- **Logs (`/tmp/writ-server.log`, port 9032):** daemon PIDs 91542 → 91593 → 91812 → 40104 → 53559 — each starts, serves 2–4 requests, then receives `Shutting down` / `Finished server process` (clean SIGTERM-path). No FalkorDB/redis error; no stale-socket error. The shutdown path is a clean Uvicorn SIGTERM handler, not a crash. Five restarts across the observation window, none persisting.
+- **Contrast:** falkor-writ (port 9041) was healthy in the same window — rag-debug at 08:15:44 shows `response_len=5468`, 5 rules injected. The problem is Iris-specific.
+- **Root cause (re-investigated 2026-06-27, NOT reproduced):** NOT B17-class after all. The cache copy was verified to contain the B17 double-fork (`writ_spawn_daemon_detached` + `os.setsid` at `bin/lib/common.sh:155`, called at both spawn sites `writ-rag-inject.sh:60` and `session-start-bootstrap.sh:116`). A live reproduction with `CLAUDE_PLUGIN_ROOT` set (real plugin conditions) spawned an Iris daemon PID 6771, **PPID=1, stdin /dev/null, healthy 278 rules, persisted** for the full observation window — setsid works. The 08:12–08:26 deaths were a transient that has since cleared; the most plausible residual triggers are a concurrent-start `graph.lock` race (B8-class, seen once in `server.log` for port 8804 — `RuntimeError: graph DB is locked by PID`) or a stale start-lock/socket that the auto-start recovery didn't fully clear. (Note: the B22 caveat "restart needed for .sh hooks" is wrong — bash re-reads the hook file each invocation, so the on-disk fix applies without a Claude restart.)
+- **Fix (hardening applied 2026-06-27):** the three confirmed fragility bugs below (B23, B24, B25) were fixed + synced to the plugin cache. The Iris daemon was also manually brought online (PID 6771, persists). No B22-specific code change because the death could not be reproduced; if it recurs, capture the exact `/tmp/writ-server.log` + `/tmp/writ-rag-debug.log` slice from the failing session and re-examine the `graph.lock` / start-lock path.
+
+### B23 — `writ-session.py:156` `_write_cache` FileNotFoundError → 500 on `/session/.../context-percent` — ✅ FIXED 2026-06-27
+- **Severity:** low (non-fatal; only the context-percent endpoint errors; daemon stays up, rules still served).
+- **Symptom:** `/tmp/writ-server.log` for port 9032 shows intermittent 500 responses to `GET /session/<sid>/context-percent`, with traceback:
+  ```
+  File ".../writ/server.py", line <N>, in <endpoint>
+  File ".../bin/lib/writ-session.py", line 156, in _write_cache
+    os.rename(tmp_path, path)
+  FileNotFoundError: [Errno 2] No such file or directory: '<cache_dir>/<sid>.json.tmp'
+  ```
+- **Root cause (confirmed):** `_write_cache` used a FIXED `<sid>.json.tmp` name. Two concurrent hook processes writing the SAME session_id (rag-inject + context-watcher both POST `/context-percent`; several PostToolUse hooks call `writ-session.py update <sid>` in one turn) share that one temp file: writer A finishes and `os.rename`s (deleting the tmp), writer B's `os.rename` then raises `FileNotFoundError`. Confirmed twice in `/tmp/writ-server.log` (lines 4565, 4691). This is a real concurrency race, not a cleanup race.
+- **Impact:** the endpoint returns 500; the caller (hook reading context percentage) likely catches or ignores it. No data loss observed (the live cache file at `<sid>.json` is not touched on a failed rename).
+- **Fix (2026-06-27, `bin/lib/writ-session.py`):** `tmp_path` is now per-writer — `f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"` — so concurrent processes (different pid) and concurrent in-process threads (different `get_ident()`) never share a temp file; `os.rename` → `os.replace` (atomic + overwrites the destination); on `OSError` the tmp is unlinked before re-raising so no orphan `.tmp` is left. `import threading` added. **Regression test:** `tests/test_session_write_cache_concurrency.py` — 12 concurrent `writ-session.py update` subprocesses on the same sid all exit 0 with no `FileNotFoundError` + final cache valid JSON + no orphan `.tmp`; plus an 8-thread × 40-iter in-process `_write_cache` stress. 2/2 green. Synced to the plugin cache. (Pre-existing ruff unused-import warnings elsewhere in the file are out of scope; edit range clean.)
+
+### B24 — `writ-rag-inject.sh:912` feedback URL hardcoded to `localhost:8765` — ✅ FIXED 2026-06-27
+- **Severity:** low (feedback silently posts to the wrong port on non-falkor-writ repos).
+- **Symptom / observation:** inside `writ-rag-inject.sh` at line 912, a Python heredoc posts retrieval feedback:
+  ```python
+  requests.post('http://localhost:8765/feedback', ...)
+  ```
+  This literal `8765` is inside a Python heredoc — the surrounding shell variable `$WRIT_PORT` is NOT interpolated into the heredoc's string literal. On any repo with a derived port ≠ 8765 (Iris=9032, mkt_engine=8804, falkor-writ=9041), the feedback POST goes to 8765, which is either nothing or a foreign daemon.
+- **Cause:** the Python code block is a `python3 -c "..."` whose outer delimiter is **double quotes** (not a single-quoted heredoc), so `$WRIT_PORT` WOULD have been interpolated by bash — but the URL string was simply never updated to use it when the per-repo port (D4-02) was introduced. The original diagnosis's "single-quoted heredoc" guess was wrong; the fix is just to reference the variable that was already in scope.
+- **Fix (2026-06-27, `.claude/hooks/writ-rag-inject.sh`):** `'http://localhost:8765/feedback'` → `'http://localhost:${WRIT_PORT}/feedback'`. `$WRIT_PORT` is exported by `common.sh` (sourced at line 17) and in scope at line 922. `bash -n` clean. Synced to the plugin cache. Verified no other `localhost:8765` / `127.0.0.1:8765` literal remains in any hook.
+
+### B25 — `writ-rag-inject.sh:14` VENV_DIR fallback points at a non-existent skill-dir venv → daemon spawn silently skipped → "offline" — ✅ FIXED 2026-06-27
+- **Severity:** high when triggered (the repo runs with NO rules and NO error; looks exactly like "writ offline").
+- **Symptom:** when the hook runs WITHOUT `CLAUDE_PLUGIN_ROOT` set (standalone-skill install, or a manual/synthetic invocation), the `else` branch set `VENV_DIR="$WRIT_DIR/.venv"` — a venv that does not exist on a cache-venv-only install (only `~/.cache/writ/.venv` is bootstrapped; B18). The later guard `if [ -f "$VENV_DIR/bin/python3" ]` (line 59) is then false and `writ_spawn_daemon_detached` is **never called** — the 5s `/health` wait loops on nothing and the hook prints `[Writ: server unavailable, proceeding without rules]` with no diagnostic. This bit the investigation's first three reproductions (looked like the B22 reap, was actually a skipped spawn). Not the Iris-plugin-mode cause (plugin mode sets `CLAUDE_PLUGIN_ROOT` → `VENV_DIR=~/.cache/writ/.venv`, the good path) but a real silent-failure axis.
+- **Root cause:** two python-resolution paths in the repo — `common.sh`'s `_writ_resolve_python` probes every known venv location, but `writ-rag-inject.sh`'s inline `VENV_DIR` fallback does not; it hardcodes the single skill-dir path. Asymmetric with `hooks/scripts/session-start-bootstrap.sh:28-34`, which probes both.
+- **Fix (2026-06-27, `.claude/hooks/writ-rag-inject.sh:11-20`):** the `else` branch now probes `$WRIT_DIR/.venv/bin/python3` first (standalone install) and falls back to `${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/.venv` (cache-venv-only install), mirroring `session-start-bootstrap.sh`. `bash -n` clean. Synced to the plugin cache.
+
+---
+
+## Session 2026-06-28 — Iris Phase 5 orchestration (Claude driving deepseek; code work in git worktrees). Reporter observations, NOT yet fixed.
+
+### B26 — `ENF-PROC-VERIFY-001` keys evidence by `todo_id = content[:40]`; rewording a completed todo orphans its evidence — ✅ FIXED (2026-06-29)
+- **Severity:** medium (recurring friction in any long Work-mode session; ~4 hits in one Phase-5 session).
+- **Symptom:** mark a todo `completed` → POST `/session/{sid}/verification-evidence` → gate passes. Later **reword that same todo's `content`** (normal as a list evolves) and re-send the full TodoWrite list → `ENF-PROC-VERIFY-001` **re-fires** on the already-verified item: `completion claim for '<new first 40 chars>' has no verification_evidence`.
+- **Root cause:** the deny hook (`.claude/hooks/writ-verify-before-claim.sh`) keys evidence by `t.get("id") or t.get("content","")[:40]`. TodoWrite items carry **no stable `id`** from the harness, so the key is the first 40 chars of the (mutable) content. Reword → new key → prior evidence (under the old 40-char key) no longer matches → re-gated. The work was genuinely verified; only the label changed.
+- **Impact:** forces a re-POST of identical evidence under the new truncated key whenever a completed todo's wording is touched. Pure ceremony; trains the operator to copy-paste evidence rather than treat it as meaningful.
+- **Fix (option b — transition-only gating):** `writ-verify-before-claim.sh` now snapshots `last_todos` (key=first-40, status) per gate run. A `completed` todo whose key is NOT in evidence is allowed iff the **position-matched prior todo** was already `completed` and ITS key is in evidence — i.e. the evidence carries forward across a reword as long as status stays `completed`. Deny only fires on a genuine `pending/in_progress → completed` transition with no evidence. On allow, both `verification_evidence` and `last_todos` are persisted; on deny, the snapshot is NOT persisted (no half-state). Regression tests: `tests/test_phase2_hooks.py::TestVerifyBeforeClaimTransitionGating` (6 cases: new-completion-denies, key-match-allows, reword-carries, new-item-denies, denied-no-snapshot, non-completed-allows).
+
+### B27 — No CLI / documented path to post verification evidence; operator must reverse-engineer port + endpoint — ✅ FIXED (2026-06-29)
+- **Severity:** medium (every Work-mode completion claim needs it; steep, undocumented one-time discovery).
+- **Symptom:** `ENF-PROC-VERIFY-001` says "POST `/session/{sid}/verification-evidence`" but `writ-session.py` exposes no such subcommand. To satisfy the gate I derived the port myself (`8765 + cksum(repo_root)%1000`, `common.sh:413`), found the route in `writ/server.py`, read the body shape (`{todo_id, command, output_excerpt, exit_code}`), and hand-built a `urllib` POST.
+- **Fix:** `bin/lib/writ-session.py` now has `cmd_verification_evidence(session_id, args)` + a `verification-evidence` subcommand (`--todo --command --output --exit`). It resolves the per-repo port via `_resolve_writ_port()` — mirrors `common.sh` exactly: `WRIT_PORT_OVERRIDE` wins; else `cksum(WRIT_REPO_ROOT.rstrip("/")) % 1000 + 8765` (cksum shelled out, NOT reimplemented, so the hash matches POSIX cksum byte-for-byte). POSTs via `urllib` to `http://127.0.0.1:{port}/session/{sid}/verification-evidence`; exit 1 on `URLError`. Listed in the `Commands:` usage line. E2E-verified live against the 9041 daemon (CLI → `{"ok":true}` → session carries the evidence key).
+
+### B28 — `ENF-PROC-WORKTREE-001` matches the raw command text and false-positives on an unexpanded shell variable — ✅ FIXED (2026-06-29)
+- **Severity:** medium (blocks the standard `deepseek-orchestrate` worktree setup despite a correct gitignore).
+- **Symptom:** `git worktree add "$WT" -b "$TB" "$PHASE"` (`WT=".dsk-worktrees/phase5-code-w5-eval"`) is **denied**: `ENF-PROC-WORKTREE-001: project-local worktree target '"$WT"' is not matched by any .gitignore entry`. But `.dsk-worktrees/` **is** in `.gitignore` (line 12) and `git check-ignore` confirms the expanded path is ignored. Re-running with the **literal** path passes.
+- **Fix:** `.claude/hooks/writ-worktree-safety.sh` python guard rewritten. `_expand()` strips quotes and expands `$VAR`/`${VAR}` from `os.environ`. If a `$var` token survives unresolved → `sys.exit(0)` (permissive skip + stderr note; the guard is an ergonomics safety-net, not a hard security boundary, and Work mode is trusted) — this stops the false-positive on the `WT=...; git worktree add "$WT"` pattern. For resolved project-local paths, `git check-ignore --quiet <rel>` is authoritative (rc 0 = ignored → allow; rc 1 = not ignored → deny with "add to .gitignore" message; 128/error → textual `.gitignore` fallback). Smoke-verified: a gitignored path returns rc 0 → allow.
+
+### B29 — Cross-project bible rules surface in an unrelated project (Magento/PHP rules in a Python repo) — ✅ FIXED (2026-06-29, signal-quality)
+- **Severity:** low (noise, not breakage) — dilutes the per-turn rule budget with inapplicable rules.
+- **Symptom:** in Iris (Python, Postgres-RAG, zero PHP) the per-turn RAG injection repeatedly surfaced Magento/PHP bible rules — `FW-M2-003` (Magento `collect_totals` ordering), `SEC-UNI-003` (PHP `__toArray` filtering), `ENF-SYS-006` (PHP state-machine constants), `PERF-QBUDGET-001` (Magento query budget). The repo's own `PROJ-*` rules (`PROJ-GRAPH-002`, `PROJ-DB-001`, `PROJ-FMT-001`) **were** relevant.
+- **Root cause (confirmed):** two layers. (1) The retrieval pipeline's Stage 1 strict-equality domain filter (`pipeline.py:256-260,276-280`) compares `rule.domain.lower() == request.domain.lower()` — rule domains are freeform (`"Python / Async"`, `"Frameworks / Magento 2"`) and never equal a detected stack like `"python"`, so for a stack domain Stage 1 nukes the whole result set; (2) the scorer has no hard language/framework gate, so off-stack rules score high enough to inject.
+- **Fix (post-retrieval stack-facet filter; `writ/retrieval/` untouched):**
+  - New `writ/shared/stacks.py` (stdlib-only): `PREFIX_TO_STACK` + `DOMAIN_KEYWORD_TO_STACK` (incl. `magento/laravel/symfony → php`, `django/flask/fastapi → python`), `rule_stacks(rule_id, domain)` (derives a stack set from the rule_id prefix + the freeform domain field), `stack_allowed(rule, request_domain)` (permissive: PROJ-* always pass; no/universal request_domain → no filter; rule with no derivable stack → universal pass; else require `request_domain in stacks`), `is_stack_domain(domain)`.
+  - `writ/server.py:query_rules`: when `request.domain` is a detected stack (`is_stack_domain`), pass `domain=None` to the pipeline (bypass Stage 1 so it returns the full semantic-ranked mixed set instead of nuking it) and apply `stack_allowed` as a post-retrieval trim. For `"universal"`/None the pipeline also gets `domain=None` (no Stage 1, no post-filter → all kept). For a real freeform domain (e.g. `"Architecture"`) Stage 1 stays in charge — that contract is unchanged.
+  - **Domain enrichment:** the pipeline's ranked rule dicts omit the `domain` field (keys: rule_id/statement/trigger/...), so the filter enriches each rule's `domain` from `_pipeline._metadata[rid]["domain"]` (the pipeline's full per-rule index built from the graph fetch) before filtering — otherwise FW-* rules (stack resolvable only via the domain field, e.g. Magento→php) would slip through as "universal". This stays in the endpoint; `writ/retrieval/` is not modified.
+  - **Unblock:** `bin/run-analysis.sh` recognizes a `writ:noauth` file-level directive so server.py (localhost-only, B17) isn't false-flagged by SEC-AUTHZ-ENFORCE-001; the directive is in server.py's module docstring. Other security scans (mass-assign, weak-hash, weak-rng, validation) still run.
+  - Tests: `tests/test_stacks.py` (17), `tests/test_server_stack_filter.py` (9) — incl. the no-`domain`-field enrichment case mirroring the real pipeline shape. E2E-verified live on the 9041 daemon (279 rules): `/query domain=python` drops `FW-M2-003/005/006` + `PHP-TRY-001`/`PHP-ERR-002` (keeps 5 universal); `/query domain=php` keeps Magento+PHP (10); no-domain keeps all (10). Regression sweep (retrieval/server/methodology/authoring/proximity/session/hooks): 163 pass, 0 fail.
+  - **Permissive contract (per operator choice):** repos whose detector returns `universal`/None (no pyproject/composer/etc. marker) get NO filter — the hook (`writ-rag-inject.sh:418-419`) only forwards `domain` when `detected_domain and detected_domain != 'universal'`, so unknown-stack repos keep current behavior. Improving detection for marker-less repos is deferred (separate work).
+
+---
+
 ## Recurring fix checklist (when you change any hook/script)
 
 1. Edit the file in the **repo**.
 2. `bash -n <file>` (and `ruff`/`mypy` if `.py`).
 3. **Sync to the cache** Claude runs:
    `cp <repo>/<path> ~/.claude/plugins/cache/writ/writ/<ver>/<path>` —
-   OR reinstall the plugin to re-copy everything. **Also sync `.claude-plugin/plugin.json`** when you add/move agents/commands/hooks paths.
+  OR reinstall the plugin to re-copy everything. **Also sync `.claude-plugin/plugin.json`** when you add/move agents/commands/hooks paths.
 4. **Restart Claude Code** so sessions reload hooks.
 5. Verify against the **cache** copy, not the repo (`grep` the cache file).
 
-## Known-good live state (2026-06-23)
-- falkor-writ daemon on **9041**, mkt_engine on **8804**, Iris on **9032** — all healthy,
-  ~276–277 rules each, `PPID=1`, stdin `/dev/null`.
-- All fixes above are applied in the repo AND synced to the plugin cache.
+## Known-good live state (last updated 2026-06-27)
+- **falkor-writ (9041):** healthy as of 2026-06-27 — rag-debug shows `response_len=5468`, 5 rules injected at 08:15:44.
+- **mkt_engine (8804):** last confirmed healthy 2026-06-26 (B21 fix session). Not re-verified 2026-06-27.
+- **Iris (9032):** ✅ **healthy as of 2026-06-27** (PID 6771, PPID=1, 278 rules) — brought online via a manual detached spawn during the B22 re-investigation; the 08:12–08:26 SIGTERM-reap deaths could NOT be reproduced with the current cache (B17 setsid present + verified working). B23/B24/B25 fixed + synced this session.
+- All fixes through B25 applied in repo AND synced to plugin cache (per 2026-06-27 session).
+- B22: re-investigated, NOT reproduced (transient; hardening applied via B23/B24/B25). B23/B24/B25: ✅ fixed 2026-06-27.
 - Everything uncommitted on `main` (per owner: "main is fine").

@@ -1,7 +1,7 @@
 ---
 name: plan-from-specs
 version: 1.0.0
-description: Use when generating a phased implementation plan from a detailed spec + research doc. Triggers on "write the plan", "plan this feature", "make a plan for", "/plan", after running /research. Requires both a detailed spec and research doc to exist. Never writes code.
+description: Use when generating a phased implementation plan from a detailed spec + research doc. Triggers on "write the plan", "plan this feature", "make a plan for", "/plan", after running /factual-code-verification. Requires both a detailed spec and research doc to exist. Never writes code.
 ---
 
 > **Coupling note (Writ):** the plan's gate-bearing sections (`## Files`, `## Analysis`, `## Rules Applied`, `## Capabilities`) are enforced by `_validate_phase_a` (`bin/lib/writ-session.py`; run on `/writ-approve` advance + the `validate-exit-plan` hook). Change the plan template here and you MUST update `_validate_phase_a` — they must agree or the work gate blocks.
@@ -103,15 +103,15 @@ No strawman, no rough sketch, no workaround. Stop completely.
 
 The orchestrator provides a **mini-spec** — a structured summary from the grill interview containing: restated requirement, scope boundaries, done-when criteria. This replaces the full spec. Accept it as the "spec" input. The mini-spec is passed in the dispatch prompt or written to `docs/AI_artifacts/2_specs/$FEATURE-mini.md`. Do NOT demand a full spec in tiny mode.
 
-### 0d. Find the research doc ⛔ Hard prerequisite (standard mode) | Skipped (tiny mode)
+### 0d. Find the factual-code-verification doc ⛔ Hard prerequisite (standard mode) | Skipped (tiny mode)
 
 **Standard mode (medium / heavy tier):**
 
-The research doc is the output of `/research`. Look in this order:
+The factual-code-verification doc is the output of `/factual-code-verification`. Look in this order:
 
-1. `docs/AI_artifacts/3_research/$FEATURE.md`
-2. Any path for research mentioned in CLAUDE.md
-3. Any `.md` file in `docs/AI_artifacts/3_research/` whose name contains the feature slug
+1. `docs/AI_artifacts/3_factual-code-verification/$FEATURE.md`
+2. Any path for factual-code-verification mentioned in CLAUDE.md
+3. Any `.md` file in `docs/AI_artifacts/3_factual-code-verification/` whose name contains the feature slug
 
 If not found: call `AskUserQuestion`:
 - A) Provide the research file path or paste findings here
@@ -119,7 +119,7 @@ If not found: call `AskUserQuestion`:
 
 **If user chooses B or cannot provide research: hard stop.**
 
-> "Cannot write a trustworthy plan without research. Research maps spec assumptions to actual code — without it, the plan will reference files, functions, and patterns that may not exist or may work differently than expected. Run /research $FEATURE first."
+> "Cannot write a trustworthy plan without factual code verification. Factual code verification maps spec assumptions to actual code — without it, the plan will reference files, functions, and patterns that may not exist or may work differently than expected. Run /factual-code-verification $FEATURE first."
 
 No workarounds. Stop completely.
 
@@ -456,7 +456,7 @@ before/after behavior in words. (Diagrams temporarily disabled.)]
 After writing the plan, critically review it:
 
 1. Identify potential problems (missing steps, untestable phases, scope creep, dependency gaps)
-2. Check if edge cases from `docs/AI_artifacts/3_research/$FEATURE.md` have been accounted for
+2. Check if edge cases from `docs/AI_artifacts/3_factual-code-verification/$FEATURE.md` have been accounted for
 3. Check for unintentional violations of cross-phase constraints in `STATE.md`
 4. Verify that every file, method, or dependency referenced in the plan actually exists — flag anything critical that is missing before writing
 5. Call `/guardrail-check Review` once per output phase, passing that phase's concrete steps as input. For each phase, the checklist flags which constraints are at risk. Any violation → call `AskUserQuestion` with options before finalizing the phase. If a phase's steps surface an undocumented constraint or tech debt, call `/guardrail-check Write` to record it immediately before continuing.

@@ -85,8 +85,19 @@ A constraint becomes a `PROJ-` Rule node. The Rule schema needs more than the ol
 **Triggered by:** "log tech debt", "add debt"
 
 1. Read `docs/TECH_DEBT.md` → find highest `TD-NN` → next ID.
-2. Append the card (format in `references/card-formats.md`) under `## Active`, above any `## Archive`.
-3. Resolved items (Status: RESOLVED) move to `## Archive` — never delete.
+2. **Validate the card before appending.** The canonical format (from `references/card-formats.md`) is:
+   ```markdown
+   ### TD-[ID] · [Short name]
+   **Status:** OPEN | RESOLVED
+   **Phase:** [When it will be addressed]
+   **Risk if triggered early:** [What breaks if addressed before the right phase]
+   **What:** [Description]
+   **Why deferred:** [Reason]
+   **Source:** [Reference]
+   ```
+   Check every required field is present and non-empty. If the user supplied a card in a different format (e.g. `## TD-01 —`, `**Owed:**`, free-prose body), reformat it to the canonical schema before writing — do not append non-canonical cards. Status must be exactly `OPEN` or `RESOLVED` (not `MITIGATED`, `ADDRESSED`, etc.); if the user provides a non-canonical status, map it to the nearest canonical value and note the mapping.
+3. Append the validated card under `## Active` (Status: OPEN) or `## Archive` (Status: RESOLVED), above the other section.
+4. Resolved items (Status: RESOLVED) move to `## Archive` — never delete.
 
 ## Mode 1c — Write Open Question (→ flat, unchanged)
 
@@ -145,4 +156,6 @@ When `docs/CONSTRAINTS.md` exists (old flat constraints):
 - Forgetting to remind the user to **commit `docs/rules/`** after authoring (the graph is gitignored; the export is the record).
 - Treating Tech Debt as a constraint. TD = scheduled work (flat). Constraint = always-on law (graph).
 - Forgetting `## Archive` for resolved TD.
+- Appending a TD card without validating against the canonical schema — always reformat to `### TD-[ID] · [Short name]` + required fields before writing.
+- Using non-canonical TD statuses (`MITIGATED`, `ADDRESSED`, `PARTIAL`) — map to `OPEN` or `RESOLVED` before writing.
 - Auditing medium constraints — audit traces critical/high only.

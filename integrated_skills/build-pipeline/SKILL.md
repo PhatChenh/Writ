@@ -1,16 +1,16 @@
 ---
 name: build-pipeline
 version: 1.0.0
-description: Use when taking a feature or change from a raw idea to an implementation-ready plan in an existing codebase, and the design→spec→research→plan steps would each fill the context window. Triggers on "run the pipeline", "take this through the workflow", "design to plan", "/build-pipeline". Use when context keeps filling mid-workflow or you are tempted to rely on compaction between steps.
+description: Use when taking a feature or change from a raw idea to an implementation-ready plan in an existing codebase, and the design→spec→factual-code-verification→plan steps would each fill the context window. Triggers on "run the pipeline", "take this through the workflow", "design to plan", "/build-pipeline". Use when context keeps filling mid-workflow or you are tempted to rely on compaction between steps.
 ---
 
 # Build Pipeline (orchestrator)
 
 ## Overview
 
-Conducts the four-step feature workflow — **design → spec → research → plan** — while keeping the main session lean. Every heavy code survey is quarantined in a fresh-context `Agent` subagent; the main thread holds only the small markdown artifacts and one-page summaries. Interactive human gates run in the main thread.
+Conducts the four-step feature workflow — **design → spec → factual-code-verification → plan** — while keeping the main session lean. Every heavy code survey is quarantined in a fresh-context `Agent` subagent; the main thread holds only the small markdown artifacts and one-page summaries. Interactive human gates run in the main thread.
 
-**This skill does NOT write code, and does NOT merge the four skills.** Each step is still run by its own skill (`codebase-design-analysis`, `writing-detailed-specs`, `research`, `plan-from-specs`), which remain the single source of truth. The orchestrator dispatches a subagent that *reads that skill by path and follows it*. You can still invoke any of the four skills directly — this skill is an optional conductor on top.
+**This skill does NOT write code, and does NOT merge the four skills.** Each step is still run by its own skill (`codebase-design-analysis`, `writing-detailed-specs`, `factual-code-verification`, `plan-from-specs`), which remain the single source of truth. The orchestrator dispatches a subagent that *reads that skill by path and follows it*. You can still invoke any of the four skills directly — this skill is an optional conductor on top.
 
 **Core principle:** The main thread never opens source files to survey them. If you are reading code in the main thread, you are doing it wrong — dispatch a subagent.
 
@@ -24,11 +24,11 @@ Conducts the four-step feature workflow — **design → spec → research → p
 
 2. **Verify at the depth the claim requires.** A claim about a *signature* may be checked by a targeted read; a claim about *behavior* requires reading the behavior. A grep that shows a return type does NOT verify what a function does. Seniority of the spec author is not evidence. **When unsure which kind of claim it is, treat it as behavior.** A return-type or contract claim ("returns a Result") is a behavior claim — read the body to confirm the function never raises or returns something else instead. "It's just a signature" is the lazy operator's self-justification; default to reading the body.
 
-3. **Research trusts code, not the spec.** The research subagent verifies every assumption against the ACTUAL code. It must never accept the spec's claims or line numbers because they "look precise" or are labelled "pre-validated." This asymmetry is the whole point of the verification boundary.
+3. **Factual-code-verification trusts code, not the spec.** The factual-code-verification subagent verifies every assumption against the ACTUAL code. It must never accept the spec's claims or line numbers because they "look precise" or are labelled "pre-validated." This asymmetry is the whole point of the verification boundary.
 
-4. **An invalidated assumption is a HARD STOP on the march to plan.** If research finds the spec's assumption is false, you do NOT proceed to plan. "I flagged it loudly and wrote the plan anyway" is forbidden, even under ship-tomorrow pressure. But hard-stop means *enter the Research loop-back* (below) — bounded auto-rewrite for mechanical/type-b invalidations, escalate to the user for type-c — not abandon the run. Never write the plan over an unresolved contradiction. **Narrow exception:** if the corrected fact provably changes NO build step, correct it in place and continue — but the bar is high. If you cannot show every build step is unaffected, it routes through the loop-back. "Probably fine" is not "provably unaffected."
+4. **An invalidated assumption is a HARD STOP on the march to plan.** If factual-code-verification finds the spec's assumption is false, you do NOT proceed to plan. "I flagged it loudly and wrote the plan anyway" is forbidden, even under ship-tomorrow pressure. But hard-stop means *enter the Factual-code-verification loop-back* (below) — bounded auto-rewrite for mechanical/type-b invalidations, escalate to the user for type-c — not abandon the run. Never write the plan over an unresolved contradiction. **Narrow exception:** if the corrected fact provably changes NO build step, correct it in place and continue — but the bar is high. If you cannot show every build step is unaffected, it routes through the loop-back. "Probably fine" is not "provably unaffected."
 
-5. **Directionality of trust.** Each step trusts the *verified* artifact directly upstream of it. Research is the verification boundary: everything downstream of research (the plan) may trust the research doc; everything at or upstream of research must be re-verified against code, never taken on the previous doc's word.
+5. **Directionality of trust.** Each step trusts the *verified* artifact directly upstream of it. Factual-code-verification is the verification boundary: everything downstream of factual-code-verification (the plan) may trust the factual-code-verification doc; everything at or upstream of factual-code-verification must be re-verified against code, never taken on the previous doc's word.
 
 6. **Non-coder default (applies to every artifact).** The reader is a non-technical manager who cannot read code. This is the permanent default, not a per-invocation flag. Every section leads with a plain-English sentence of what it means and why it matters; code references (`file:line`, symbol names) go in parentheses or sub-bullets. The artifact must make sense if every `code`-formatted token were deleted. The skills enforce this via their reader-mode defaults. An `engineer-mode` opt-in flag exists for developers who want dense output — propagate it in the dispatch prompt when requested, otherwise omit (non-coder is assumed).
 
@@ -37,6 +37,17 @@ Conducts the four-step feature workflow — **design → spec → research → p
 ## Setup prerequisite
 
 Subagent model is **environment configuration, not a dispatch parameter** — the per-call `model` override does not change it. Before running, confirm the harness's subagent model is set to a capable Claude model. If a spawn fails resolving an unavailable model, fix the setting; do not retry blindly.
+
+---
+
+## Efficient mode — apply across EVERY phase (token-saving, quality-first)
+
+Run this whole pipeline under the **efficient-mode** skill (`~/.claude/skills/efficient-mode/SKILL.md`). Read it once at start. It governs the strong-vs-cheap split this pipeline already relies on (cheap *gather* / strong *judge* — the same shape as the Phase -2 two-step scout) and extends it to every dispatch.
+
+- **Send the survey / gather subagents to a CHEAPER model** (Sonnet/Haiku via the `Agent` `model` override; or a cheap `dsk`/deepseek session if the harness pins the subagent model — see Setup prerequisite) when the work is **mechanical legwork**: locating code, gathering facts into the artifact template, breadth reads. The orchestrator (strong model) holds the judgment.
+- **Never delegate to a cheap model:** the grill (Phase -1), the design decision + options synthesis, the **factual-code-verification adjudication and every BEHAVIOR claim** (rule 2 — behavior claims need behavior reading at strong-model depth; a cheap subagent may *gather* the evidence, but the orchestrator confirms the load-bearing body itself), the invalidated-assumption classification (type-b vs type-c), ADRs/contracts, and all HITL framing.
+- **Verify cheap output before acting — proportional to stakes** (efficient-mode guard 1). The factual-code-verification step is the **correctness boundary** (rule 3): a cheap gatherer is allowed there ONLY if the orchestrator re-checks the behavior claims itself. A cheap model silently under-reading and "validating" a false assumption is exactly the catastrophe rule 4 hard-stops on — do not let token pressure open that hole.
+- **Quality is priority #1, always.** A wrong fact through the verification boundary builds a wrong plan — that costs far more than the tokens saved. Under token/time pressure compress the **legwork** (cheaper models, parallel dispatch), never the **judgment** or the **verification depth**. When unsure whether a read is mechanical or correctness-critical, treat it as correctness-critical and keep it on the strong model (rule 2 default; efficient-mode guard 4).
 
 ---
 
@@ -66,10 +77,10 @@ Inject the resolved upstream set + the downstream contract note into the design 
 When gated in, scout prior art **before the grill decision question that the landmine gates** — not necessarily before the whole interview. For a landmine the roadmap already names (concrete), scout pre-grill so the grill's recommended answer is informed. For a landmine the grill itself surfaces (unknown until the interview), fire the scout at that point mid/post-grill. Do not block the whole interview waiting on a scout for landmines the grill has not found yet.
 
 **Two-step scout (model-matched):**
-1. **Gather (cheaper model, e.g. Sonnet — dispatch a subagent).** Web-search how others/other systems solved this specific landmine. Return a short findings summary **PLUS the full list of source URLs PLUS the raw notable quotes** — not prose-only. The URL + quote list is mandatory: prose-only over-compression silently drops the load-bearing option and the orchestrator never knows to dig (same failure mode as research independence). Dispatch prompt ends with: "return summary + source URLs + raw quotes; do not decide anything."
+1. **Gather (cheaper model, e.g. Sonnet — dispatch a subagent).** Web-search how others/other systems solved this specific landmine. Return a short findings summary **PLUS the full list of source URLs PLUS the raw notable quotes** — not prose-only. The URL + quote list is mandatory: prose-only over-compression silently drops the load-bearing option and the orchestrator never knows to dig (same failure mode as factual-code-verification independence). Dispatch prompt ends with: "return summary + source URLs + raw quotes; do not decide anything."
 2. **Judge (orchestrator, strong model — main thread).** Read the summary, spot interesting/credible options, and pull any source URL yourself to go deeper. Synthesis on a hard-to-reverse landmine is judgment work and stays with the strong model. This feeds the grill's *recommended answer* — it does NOT decide; the user still approves (HITL).
 
-Write the scout output to `docs/AI_artifacts/0_scout/<slug>.md` (summary + sources + the options the orchestrator surfaced). This is **prior-art scouting**, distinct from `docs/online_research/` (API facts for a chosen lib) and from the research step (verifies spec assumptions against THIS codebase — trusts code, not the internet). Do not blur the three: scout findings never enter the research step's lane.
+Write the scout output to `docs/AI_artifacts/0_scout/<slug>.md` (summary + sources + the options the orchestrator surfaced). This is **prior-art scouting**, distinct from `docs/online_research/` (API facts for a chosen lib) and from the factual-code-verification step (verifies spec assumptions against THIS codebase — trusts code, not the internet). Do not blur the three: scout findings never enter the factual-code-verification step's lane.
 
 ---
 
@@ -98,8 +109,8 @@ Classify the change based on what the interview revealed. This decides which ste
 | Tier | Test | Steps to run |
 |------|------|--------------|
 | **tiny** | 1–2 files, reversible, no new interface, no new public contract, no cross-module coupling surfaced in interview | orchestrator writes **mini-spec + success criteria** → **plan** (plan reads code, can escalate to medium) |
-| **medium** | One phase, no cross-module contract change, no irreversible/auth/migration/infra impact | **design-lite → spec → research → plan** (precision code read in design, lighter implications, full options grid + success criteria) |
-| **heavy** | Risky, irreversible, multi-phase, or touches auth/payments/migrations/secrets/infra/CI | **design → spec → research → plan** (full chain, full code read) |
+| **medium** | One phase, no cross-module contract change, no irreversible/auth/migration/infra impact | **design-lite → spec → factual-code-verification → plan** (precision code read in design, lighter implications, full options grid + success criteria) |
+| **heavy** | Risky, irreversible, multi-phase, or touches auth/payments/migrations/secrets/infra/CI | **design → spec → factual-code-verification → plan** (full chain, full code read) |
 
 State the tier, the evidence from the interview that determined it, and the steps you will run. Then proceed.
 
@@ -128,8 +139,6 @@ _From grill interview, <date>_
 ```
 
 Write to `docs/AI_artifacts/2_specs/$FEATURE-mini.md`.
-
-**2. Write success criteria** to `behavior_inventory.yaml`. Convert interview done-when answers into inventory entries with `origin: design`, `granularity: outcome`. Use the ID prefix from interview step 7. These are design-intent entries — implementation cannot override them (see update-behavior-guide conflict rules).
 
 ---
 
@@ -192,7 +201,7 @@ Empty output → no constraints, inject nothing (no forced minimum). Otherwise p
 |------|-------|--------------------------------|-----------------|
 | design | `codebase-design-analysis` | (interview already done in Phase -1) — lock decisions from interview | Steps 0–6: full code read, implications, success criteria, viable options, write design doc |
 | spec | `writing-detailed-specs` | none (confirm phase boundary if the subagent flags it) | whole skill: inventory + write spec |
-| research | `research` | calibration-plan gate, if the subagent flags scope ambiguity | whole skill: deep-trace + verify assumptions |
+| factual-code-verification | `factual-code-verification` | calibration-plan gate, if the subagent flags scope ambiguity | whole skill: deep-trace + verify assumptions |
 | plan | `plan-from-specs` | annotation handling (only on revision runs) | whole skill: draft phases + confirm exact lines |
 
 **Medium tier:**
@@ -201,7 +210,7 @@ Empty output → no constraints, inject nothing (no forced minimum). Otherwise p
 |------|-------|--------------------------------|-----------------|
 | design-lite | `codebase-design-analysis` | (interview already done in Phase -1) — lock decisions from interview | Precision code read (direct functions + immediate callers/callees), lighter Step 3 (decision-relevant facts only), full Step 3.5 + options grid, write design doc |
 | spec | `writing-detailed-specs` | none | whole skill: inventory + write spec |
-| research | `research` | calibration-plan gate | whole skill: full deep-trace + verify assumptions |
+| factual-code-verification | `factual-code-verification` | calibration-plan gate | whole skill: full deep-trace + verify assumptions |
 | plan | `plan-from-specs` | none | whole skill: draft phases |
 
 **Tiny tier:**
@@ -213,9 +222,9 @@ Empty output → no constraints, inject nothing (no forced minimum). Otherwise p
 
 ---
 
-## Research loop-back (resolving invalidated assumptions)
+## Factual-code-verification loop-back (resolving invalidated assumptions)
 
-When a research dispatch returns invalidated assumptions, the orchestrator does NOT proceed to plan — but it also does not, by default, dump the whole problem back on the human. It drives a **bounded** resolution loop. Classify each invalidated assumption:
+When a factual-code-verification dispatch returns invalidated assumptions, the orchestrator does NOT proceed to plan — but it also does not, by default, dump the whole problem back on the human. It drives a **bounded** resolution loop. Classify each invalidated assumption:
 
 | Class | Test | Action |
 |-------|------|--------|
@@ -225,7 +234,7 @@ When a research dispatch returns invalidated assumptions, the orchestrator does 
 
 "Big" uses the **same** test as `plan-from-specs`' big-disagreement protocol — one boundary across the whole pipeline, not a second invented one.
 
-**After any mechanical or type-b patch:** re-dispatch the SAME research step on the same file. Research auto-enters its **re-check mode** (it finds the existing `## Invalidated Assumptions` section) and re-verifies, marking each Resolved / Still-invalidated / New. Read those counts to decide the next move — do not re-derive the comparison yourself.
+**After any mechanical or type-b patch:** re-dispatch the SAME factual-code-verification step on the same file. Factual-code-verification auto-enters its **re-check mode** (it finds the existing `## Invalidated Assumptions` section) and re-verifies, marking each Resolved / Still-invalidated / New. Read those counts to decide the next move — do not re-derive the comparison yourself.
 
 **Loop guards (non-negotiable):**
 1. **Cap of 2 auto-rewrite cycles.** If the 3rd research pass still reports ANY invalidation, escalate to the user regardless of class. Non-convergence is itself the signal a human is needed.
@@ -236,7 +245,7 @@ When a research dispatch returns invalidated assumptions, the orchestrator does 
 
 **Never silently resume.** On the user's decision, re-enter the **design step** (run with the resolution locked — no new interview needed since Phase -1 is already done), then continue spec → research → plan. The re-run design doc states plainly what changed (original design vs adjusted design) so the reader sees what was changed and why.
 
-**Why the orchestrator may patch a type-b spec but never a type-c:** a type-b fix stays inside the already-chosen design option and below the contract/decision line — it is execution detail the orchestrator can own. A type-c fix changes the chosen approach, which is a design decision and therefore the user's call (the human has final authority on design). The bias guard holds throughout: research verifies, the spec-rewriter (with design judgment) decides, and they are never the same voice transcribing itself.
+**Why the orchestrator may patch a type-b spec but never a type-c:** a type-b fix stays inside the already-chosen design option and below the contract/decision line — it is execution detail the orchestrator can own. A type-c fix changes the chosen approach, which is a design decision and therefore the user's call (the human has final authority on design). The bias guard holds throughout: factual-code-verification verifies, the spec-rewriter (with design judgment) decides, and they are never the same voice transcribing itself.
 
 ## Destination folders (where each artifact lands)
 
@@ -247,7 +256,7 @@ When a research dispatch returns invalidated assumptions, the orchestrator does 
 | design doc | `docs/AI_artifacts/1_design/` |
 | success criteria | `docs/AI_artifacts/1.5_usability_test/` |
 | spec | `docs/AI_artifacts/2_specs/` |
-| research doc | `docs/AI_artifacts/3_research/` |
+| factual-code-verification doc | `docs/AI_artifacts/3_factual-code-verification/` |
 | plan | `docs/AI_artifacts/4_plans/` |
 | ADR | `docs/architecture/system_adr/` (system-wide) or the phase's `adr/` folder |
 | STATE.md, CLAUDE.md, CONTEXT.md, OPEN_QUESTIONS.md, CONSTRAINTS.md, TECH_DEBT.md | repo root |
@@ -264,7 +273,6 @@ The skills know these paths, but **always restate the exact destination in the d
 | **CONSTRAINTS.md / TECH_DEBT.md** (new constraint or debt surfaced) | any step that surfaces one | call `/guardrail-check Write` to record it before the step finishes |
 | **OPEN_QUESTIONS.md** (unresolved decisions) | design + plan steps | sync the artifact's "Open Questions" section into root `OPEN_QUESTIONS.md`; mark blockers |
 | **ADR** (hard-to-reverse + surprising + real-tradeoff decision) | design step | the design skill offers it when all three gates pass — accept the offer and write it |
-| **behavior_inventory.yaml** | design Step 3.5 (medium/heavy) or orchestrator (tiny) | entries with `origin: design`, `granularity: outcome` — implementation cannot override |
 
 > **Diagrams temporarily disabled** — the draw-diagram skill is being reworked. The pipeline runs diagram-free for now: skills write plain-English architecture/overview prose instead of Q1–Q5 diagrams. Do not call `/draw-diagram` from any step.
 
@@ -300,8 +308,6 @@ FULL CODE READ — read all files listed plus their imports/dependencies.
 Produce the options grid: present every viable option with full treatment. Rejected alternatives
 get one-line dismissal with reason.
 
-Write success criteria to behavior_inventory.yaml with origin: design, granularity: outcome.
-Derive the ID prefix by reading existing entries in behavior_inventory.yaml and following the pattern. State the chosen prefix in the design doc header.
 Write the design doc to "docs/AI_artifacts/1_design/<slug>.md".
 The design doc MUST contain these ## sections (enforced by the validate-design-doc gate): ## Summary, ## Constraints, ## Alternatives Considered (name >=2), ## Chosen Approach, ## Risks (each with a mitigation), ## Open Questions. Each section except Open Questions >=50 words; no TODO/TBD/placeholder text.
 Update CONTEXT.md for any new term.
@@ -329,10 +335,6 @@ LIGHTER Step 3 (implications) — focus on decision-relevant facts only. Skip ex
 atomic enumeration of every indirect dependency. Enough to inform option selection, not
 a full audit.
 
-FULL STRENGTH Step 3.5 (success criteria) — write to behavior_inventory.yaml with
-origin: design, granularity: outcome. No shortcuts. Derive the ID prefix from existing
-entries in behavior_inventory.yaml and state the chosen prefix in the design doc header.
-
 FULL STRENGTH Step 4 (options) — present every viable option with full treatment.
 
 Write the design doc to "docs/AI_artifacts/1_design/<slug>.md".
@@ -359,18 +361,18 @@ Write the spec to "docs/AI_artifacts/2_specs/<slug>.md". Non-coder readable is t
 Defer questions into the spec; do NOT ask me. Return a ≤1-page summary + deferred questions.
 ```
 
-### research (independence is mandatory — this prompt is load-bearing)
+### factual-code-verification (independence is mandatory — this prompt is load-bearing)
 
 ```
 NON-INTERACTIVE: true
-Follow the skill at ~/.claude/skills/research/SKILL.md.
+Follow the skill at ~/.claude/skills/factual-code-verification/SKILL.md.
 Verify the spec at "docs/AI_artifacts/2_specs/<slug>.md" against the ACTUAL code in repo root <abs path>.
 Do NOT trust the spec's claims, line numbers, or any "pre-validated" label — open the real files and confirm
 each assumption at the depth its claim requires (behavior claims need behavior reading, not a signature grep).
 The spec's "Assumptions to verify" list (carried from design) is a FLOOR, not a ceiling: verify every item on it AND any
 assumption it omits that you find while reading. Treat the list itself as a "pre-validated label" — distrust it, never let it bound your scope.
 
-Write findings to "docs/AI_artifacts/3_research/<slug>.md", including the Spec Verification table
+Write findings to "docs/AI_artifacts/3_factual-code-verification/<slug>.md", including the Spec Verification table
 and Invalidated Assumptions section if any assumption is false. Non-coder readable.
 Return a ≤1-page summary stating counts: validated / invalidated / unverifiable, and list any invalidated IDs.
 ```
@@ -381,7 +383,7 @@ Return a ≤1-page summary stating counts: validated / invalidated / unverifiabl
 NON-INTERACTIVE: true
 Follow the skill at ~/.claude/skills/plan-from-specs/SKILL.md.
 Mode: standard.
-Inputs: spec "docs/AI_artifacts/2_specs/<slug>.md" + research "docs/AI_artifacts/3_research/<slug>.md" + repo root <abs path>.
+Inputs: spec "docs/AI_artifacts/2_specs/<slug>.md" + factual-code-verification "docs/AI_artifacts/3_factual-code-verification/<slug>.md" + repo root <abs path>.
 FIRST check the research doc's "Invalidated Assumptions" — if non-empty, STOP and report; do not write a plan.
 
 Reference spec component IDs; do NOT restate the spec.
@@ -441,9 +443,9 @@ Return a ≤1-page summary + any open questions + tier escalation if triggered.
 | "I'll just read this one file in the main thread to check." | That is a survey. Dispatch a subagent. |
 | "Context is filling but compaction will keep what matters." | Forbidden (rule 1). Isolate the read. |
 | "A grep showing the return type is enough verification." | Only for a signature claim. Behavior claims need behavior reading (rule 2). |
-| "The spec says it and the author is senior — accept it." | Research trusts code, not the spec (rule 3). |
-| "Research found the spec is wrong but I'm 80% done — flag and proceed." | Hard stop to design (rule 4). |
-| "I'll pass my research conclusions as truth to the plan." | Correct — but never generalize 'trust the doc' upstream of research (rule 5). |
+| "The spec says it and the author is senior — accept it." | Factual-code-verification trusts code, not the spec (rule 3). |
+| "Factual-code-verification found the spec is wrong but I'm 80% done — flag and proceed." | Hard stop to design (rule 4). |
+| "I'll pass my factual-code-verification conclusions as truth to the plan." | Correct — but never generalize 'trust the doc' upstream of factual-code-verification (rule 5). |
 | "I'll update STATE.md after each step." | End of pipeline only — per-step churns it. |
 | "I'll dump the file:line stuff in the lead sentence." | Non-coder first — plain English leads, code in parentheses (rule 6). |
 | "This looks tiny, skip the interview." | Interview ALWAYS runs first. Tiny things have hidden landmines. |
@@ -452,14 +454,15 @@ Return a ≤1-page summary + any open questions + tier escalation if triggered.
 | "The scout subagent's prose summary is enough." | It must return source URLs + raw quotes too. Prose-only over-compresses and hides the load-bearing option. |
 | "Downstream consumer phase depends on this — read it deep." | Consumer-only. Note the contract it'll touch; do not survey its internals (it's usually not built yet). |
 | "Spec should re-survey the codebase fresh." | Warm-start from the design doc's ## Read-set; only read beyond it where decomposition needs it. |
-| "Design's Assumptions-to-verify list bounds what research checks." | It's a FLOOR, not a ceiling. Research verifies beyond it and distrusts the list itself (rule 3). |
+| "Design's Assumptions-to-verify list bounds what factual-code-verification checks." | It's a FLOOR, not a ceiling. Factual-code-verification verifies beyond it and distrusts the list itself (rule 3). |
 | "I'll conduct the Phase -1 interview myself instead of invoking /grill." | WRONG. Phase -1 MUST use `/grill` via Skill tool. Never substitute your own interview. |
 | "I'll classify the tier before understanding the request." | Tier classification comes AFTER Phase -1 interview. Not before. |
 | "I already know this is tiny — the interview won't change anything." | That's pre-classifying. The interview generates the evidence for the tier, not confirms your guess. |
 | "User said it's urgent, I'll compress the interview." | Urgency doesn't change the protocol. All 7 steps. A 15-min interview beats a wrong plan. |
 | "Steps 2 and 4 aren't needed for something this simple." | All 7 steps required. No compression. Term-sharpening and edge cases are WHERE landmines surface. |
 | "The review gate went well, I'll just dispatch the next phase." | Phase transition gate is required. Output the transition message and wait for confirmation first. |
-| "Tiny doesn't need success criteria in the inventory." | Every tier writes to behavior_inventory.yaml. Orchestrator does it for tiny. |
+| "Save tokens — let the cheap survey's behavior-claim finding stand without re-reading." | Behavior claims need strong-model depth (rule 2 + efficient-mode guard 2). Cheap gathers; the orchestrator confirms the load-bearing body. |
+| "Token pressure — I'll cheap-delegate a decision / the factual-code-verification verdict / an ADR." | Decisions, the verification adjudication, and contracts are never delegated to cheap (efficient-mode). Compress legwork, never judgment. |
 
 ---
 
@@ -473,6 +476,4 @@ If a summary is internally inconsistent, the counts look off, or two artifacts c
 - **Reading the subagent's full artifact in the main thread.** Read the summary. The artifact is the handoff for the *next* subagent, which reads it from disk.
 - **Skipping the interview for seemingly simple requests.** Phase -1 always runs. Tier classification happens after.
 - **Forgetting to restate the destination path in the dispatch prompt.** A cold subagent should never guess where to write.
-- **Letting implementation-origin entries override design-origin entries in behavior_inventory.yaml.** Cross-origin conflicts get flagged, not auto-resolved. See update-behavior-guide conflict rules.
-- **Not writing success criteria for tiny tier.** Orchestrator writes them to behavior_inventory.yaml before dispatching plan. Don't skip this.
 - **Folding scout findings into the research step.** Scout (`0_scout/`) is internet prior art; the research step trusts only THIS codebase. Three separate lanes (scout / `online_research` API facts / research) — never merge.

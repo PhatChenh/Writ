@@ -9,14 +9,12 @@ Write a handoff document summarising the current conversation so a fresh agent c
 
 ## Where to save
 
-Save to `.claude/handoffs/<slug>.md` in the current repo (create the dir if
-missing). `<slug>` = a short kebab-case name for the work. In a non-repo /
-throwaway context, fall back to the OS temp directory.
+Save to `docs/AI_artifacts/_handoff/<slug>.md` in the current repo (create the
+dir if missing). `<slug>` = a short kebab-case name for the work. In a non-repo
+/ throwaway context, fall back to the OS temp directory.
 
 > Why the workspace, not temp: a stable path lets the `validate-handoff` hook
-> check the doc, and lets the next session find it. Per-repo location is
-> config-driven (`.claude/writ.json` "artifacts.handoff"; default
-> `.claude/handoffs/`).
+> check the doc, and lets the next session find it.
 
 ## Keep it short
 

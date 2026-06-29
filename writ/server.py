@@ -3,6 +3,10 @@
 Per PY-ASYNC-001: all endpoints are async.
 Per PERF-IO-001: no sync I/O in request handlers. Pipeline uses pre-warmed indexes.
 Per PY-PYDANTIC-001: request/response bodies validated through Pydantic models.
+
+writ:noauth -- this is a localhost-only internal RAG daemon (bound to 127.0.0.1,
+no network exposure, see B17). Routes intentionally have no auth decorator;
+the writ-auth-scan missing-auth-decorator check is waived for this file.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from writ.analysis.llm import LlmAnalyzer
 from writ.config import get_falkordb_path, get_falkordb_graph, get_falkordb_module, get_redis_bin
 from writ.graph.db import FalkorDBLiteConnection
 from writ.retrieval.pipeline import RetrievalPipeline, build_pipeline
+from writ.shared.stacks import is_stack_domain, stack_allowed
 
 # Load writ-session.py as a module for session route handlers.
 
@@ -165,14 +170,42 @@ async def query_rules(request: QueryRequest) -> dict[str, Any]:
     """Ranked list of matching domain rules. Mandatory rules excluded."""
     if _pipeline is None:
         return {"error": "Pipeline not initialized. Run writ serve."}
+    # B29: when request.domain is a detected STACK (python/php/...), the
+    # pipeline's Stage 1 strict-equality domain filter would nuke the whole
+    # result set -- rule `domain` is freeform ("Python / Async") and never
+    # equals "python". So for stack domains we pass domain=None to the pipeline
+    # (it returns the full semantic-ranked mixed set) and let `stack_allowed`
+    # be the stack gate as a post-retrieval trim. "universal"/None also get
+    # domain=None (no Stage 1 filter). A real freeform domain (e.g.
+    # "Architecture") keeps Stage 1 in charge so that contract is unchanged.
+    # Does NOT modify writ/retrieval/ ; the filter is post-hoc here.
+    stack = request.domain if is_stack_domain(request.domain) else None
+    if stack:
+        pipeline_domain = None
+    elif request.domain and request.domain.lower() != "universal":
+        pipeline_domain = request.domain
+    else:
+        pipeline_domain = None
     result = _pipeline.query(
         query_text=request.query,
-        domain=request.domain,
+        domain=pipeline_domain,
         budget_tokens=request.budget_tokens,
         exclude_rule_ids=request.exclude_rule_ids,
         prefer_rule_ids=request.prefer_rule_ids,
         node_types=request.node_types,
     )
+    if stack and result.get("rules"):
+        # The pipeline's ranked rule dicts omit the `domain` field (only
+        # rule_id/statement/trigger/... are serialized), but the stack filter
+        # needs it to resolve FW-* / cross-stack prefixes. The pipeline keeps a
+        # full per-rule metadata index (`_metadata[rid]["domain"]`) built from
+        # the graph fetch -- enrich each rule from it before filtering. This
+        # stays in the endpoint; writ/retrieval/ is untouched.
+        meta = getattr(_pipeline, "_metadata", {}) or {}
+        for r in result["rules"]:
+            if not r.get("domain"):
+                r["domain"] = meta.get(r.get("rule_id"), {}).get("domain", "")
+        result["rules"] = [r for r in result["rules"] if stack_allowed(r, stack)]
     return result
 
 

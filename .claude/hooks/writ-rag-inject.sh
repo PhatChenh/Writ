@@ -11,7 +11,17 @@ if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
 else
   HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
   WRIT_DIR="$(cd "$HOOK_DIR/../.." && pwd)"
-  VENV_DIR="$WRIT_DIR/.venv"
+  # Probe the skill-dir venv first (standalone install), then the shared cache
+  # venv (cache-venv-only install, the common case on this machine). A bare
+  # $WRIT_DIR/.venv that does not exist makes the later `if [ -f
+  # "$VENV_DIR/bin/python3" ]` false -> daemon spawn silently skipped -> the
+  # repo runs with no rules and no error (B18/B22-class "offline"). Mirrors
+  # the probe in hooks/scripts/session-start-bootstrap.sh.
+  if [ -x "$WRIT_DIR/.venv/bin/python3" ]; then
+    VENV_DIR="$WRIT_DIR/.venv"
+  else
+    VENV_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/.venv"
+  fi
 fi
 SESSION_HELPER="$WRIT_DIR/bin/lib/writ-session.py"
 source "$WRIT_DIR/bin/lib/common.sh"
@@ -909,7 +919,7 @@ import urllib.request, urllib.error
 for rid in rule_ids:
     payload = json.dumps({'rule_id': rid, 'signal': 'negative'}).encode()
     req = urllib.request.Request(
-        'http://localhost:8765/feedback',
+        'http://localhost:${WRIT_PORT}/feedback',
         data=payload,
         headers={'Content-Type': 'application/json'},
         method='POST',

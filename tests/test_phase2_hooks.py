@@ -16,6 +16,7 @@ Work mode via is_work_mode (plan Section 0.4 decision 1).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -236,3 +237,161 @@ print(f"ENF-PROC-TDD-001: writing '{os.path.relpath(f, repo)}' requires a test f
             "validate-test-file.sh still contains the old absolute-path regex; "
             "it will misfire on tests/ writes when the skill lives under /writ/."
         )
+
+
+class TestVerifyBeforeClaimTransitionGating:
+    """B26 regression: ENF-PROC-VERIFY-001 must gate only on the
+    pending/in_progress -> completed transition, NOT re-gate an already-
+    completed todo that is re-sent after a reword.
+
+    Background: the gate keyed evidence by content[:40] (TodoWrite items carry
+    no stable id). Rewording a completed todo changed the key, orphaning its
+    evidence, so every re-send of the list re-fired the gate on the already-
+    verified item. Fix: persist a `last_todos` snapshot in the session cache and
+    carry the prior position's evidence forward when the same list index was
+    completed+verified in the prior snapshot. The snapshot is written only on
+    allow, so a denied TodoWrite re-evaluates against the same prior state.
+
+    These tests drive the REAL hook against a per-test temp WRIT_CACHE_DIR (no
+    daemon required -- the hook + writ-session.py cache are pure file I/O).
+    """
+
+    HOOK = "writ-verify-before-claim.sh"
+    HELPER = WRIT_ROOT / "bin" / "lib" / "writ-session.py"
+
+    def _seed(self, tmp_cache: Path, sid: str,
+              evidence: dict | None = None,
+              last_todos: list | None = None) -> None:
+        """Write a session cache with mode=work + optional evidence/snapshot.
+
+        WRIT_CACHE_DIR must be set BEFORE exec_module -- the helper reads it
+        once at import into the module-level CACHE_DIR (writ-session.py:59).
+        """
+        import importlib.util
+        prev = os.environ.get("WRIT_CACHE_DIR")
+        os.environ["WRIT_CACHE_DIR"] = str(tmp_cache)
+        try:
+            spec = importlib.util.spec_from_file_location("writ_session", str(self.HELPER))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            cache = mod._read_cache(sid)
+            cache["mode"] = "work"
+            if evidence is not None:
+                cache["verification_evidence"] = evidence
+            if last_todos is not None:
+                cache["last_todos"] = last_todos
+            mod._write_cache(sid, cache)
+        finally:
+            os.environ["WRIT_CACHE_DIR"] = prev if prev is not None else ""
+
+    def _run(self, tmp_cache: Path, sid: str, todos: list) -> tuple[str, int]:
+        stdin = {
+            "session_id": sid,
+            "tool_name": "TodoWrite",
+            "tool_input": {"todos": todos},
+        }
+        return _run_hook(self.HOOK, stdin, extra_env={"WRIT_CACHE_DIR": str(tmp_cache)})
+
+    def _cache(self, tmp_cache: Path, sid: str) -> dict:
+        """Read back the session cache. WRIT_CACHE_DIR set before exec_module
+        so the helper's module-level CACHE_DIR points at the per-test dir."""
+        import importlib.util
+        prev = os.environ.get("WRIT_CACHE_DIR")
+        os.environ["WRIT_CACHE_DIR"] = str(tmp_cache)
+        try:
+            spec = importlib.util.spec_from_file_location("writ_session", str(self.HELPER))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod._read_cache(sid)
+        finally:
+            os.environ["WRIT_CACHE_DIR"] = prev if prev is not None else ""
+
+    def test_new_completion_without_evidence_denies(self, tmp_path: Path) -> None:
+        """First-time completion with no evidence and no prior snapshot -> deny."""
+        sid = "b26-new"
+        self._seed(tmp_path, sid)  # mode=work, no evidence, no prior snapshot
+        todos = [{"content": "Implement S3 storage sink", "status": "completed"}]
+        stdout, code = self._run(tmp_path, sid, todos)
+        assert code == 0
+        assert "ENF-PROC-VERIFY-001" in stdout
+        assert "Implement S3 storage sink" in stdout
+
+    def test_key_match_allows_and_persists_snapshot(self, tmp_path: Path) -> None:
+        """Completed todo whose content[:40] is in evidence -> allow, and the
+        snapshot is persisted so a later re-send is recognized as already-done."""
+        sid = "b26-match"
+        key = "Implement S3 storage sink"
+        self._seed(tmp_path, sid, evidence={key: {"command": "pytest", "exit_code": 0}})
+        todos = [{"content": key, "status": "completed"}]
+        stdout, code = self._run(tmp_path, sid, todos)
+        assert code == 0
+        assert "ENF-PROC-VERIFY-001" not in stdout
+        snap = self._cache(tmp_path, sid)["last_todos"]
+        assert snap == [{"key": key, "status": "completed"}]
+
+    def test_reword_carries_evidence_forward(self, tmp_path: Path) -> None:
+        """B26 core: reword a completed todo -> new content[:40] key not in
+        evidence, but same list position was completed+verified in the prior
+        snapshot -> carry the evidence forward, no re-deny."""
+        sid = "b26-carry"
+        prior_key = "Implement S3 storage sink"
+        self._seed(
+            tmp_path, sid,
+            evidence={prior_key: {"command": "pytest tests/test_s3.py", "exit_code": 0}},
+            last_todos=[{"key": prior_key, "status": "completed"}],
+        )
+        reworded = "Implement S3 storage sink with retry and auth"
+        todos = [{"content": reworded, "status": "completed"}]
+        stdout, code = self._run(tmp_path, sid, todos)
+        assert code == 0, f"expected allow, got deny: {stdout}"
+        assert "ENF-PROC-VERIFY-001" not in stdout, f"reword re-gated: {stdout}"
+        # Carried evidence is now keyed by the reworded content[:40].
+        new_key = reworded[:40]
+        ev = self._cache(tmp_path, sid)["verification_evidence"]
+        assert new_key in ev, f"carry did not write new key; keys={list(ev)}"
+        assert ev[new_key]["command"] == "pytest tests/test_s3.py"
+
+    def test_new_item_beside_carried_item_denies_for_new_item(
+        self, tmp_path: Path
+    ) -> None:
+        """A carried (reworded) completed item at index 0 must NOT satisfy the
+        gate for a DIFFERENT new completed item at index 1 lacking evidence."""
+        sid = "b26-mix"
+        prior_key = "Implement S3 storage sink"
+        self._seed(
+            tmp_path, sid,
+            evidence={prior_key: {"command": "pytest", "exit_code": 0}},
+            last_todos=[{"key": prior_key, "status": "completed"}],
+        )
+        todos = [
+            {"content": "Implement S3 storage sink with retry and auth", "status": "completed"},
+            {"content": "Add analytics dashboard widget", "status": "completed"},
+        ]
+        stdout, code = self._run(tmp_path, sid, todos)
+        assert code == 0
+        assert "ENF-PROC-VERIFY-001" in stdout
+        assert "Add analytics dashboard widget" in stdout
+
+    def test_denied_write_does_not_persist_snapshot(self, tmp_path: Path) -> None:
+        """On deny the snapshot must NOT be written, so the next call
+        re-evaluates against the same prior state."""
+        sid = "b26-nosnap"
+        self._seed(tmp_path, sid, last_todos=[{"key": "prior", "status": "in_progress"}])
+        todos = [{"content": "brand new unverified work item xyz", "status": "completed"}]
+        stdout, code = self._run(tmp_path, sid, todos)
+        assert "ENF-PROC-VERIFY-001" in stdout
+        # Snapshot unchanged: still the seeded prior, not the denied todos.
+        snap = self._cache(tmp_path, sid)["last_todos"]
+        assert snap == [{"key": "prior", "status": "in_progress"}]
+
+    def test_non_completed_only_does_not_gate(self, tmp_path: Path) -> None:
+        """A list with no completed items -> allow, snapshot still persisted."""
+        sid = "b26-none"
+        self._seed(tmp_path, sid)  # mode=work, empty prior
+        todos = [{"content": "something in progress", "status": "in_progress"}]
+        stdout, code = self._run(tmp_path, sid, todos)
+        assert code == 0
+        assert "ENF-PROC-VERIFY-001" not in stdout
+        assert self._cache(tmp_path, sid)["last_todos"] == [
+            {"key": "something in progress", "status": "in_progress"}
+        ]
