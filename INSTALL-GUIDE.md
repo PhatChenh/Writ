@@ -176,3 +176,106 @@ bash scripts/bootstrap-plugin.sh
 
 > The `claude plugin` registry changes may need a Claude Code restart to fully
 > apply. The uninstall is idempotent — safe to re-run.
+
+---
+
+## 7. Update after `git pull` (work machine)
+
+### Current setup on this machine
+
+| Item | Value |
+|------|-------|
+| Repo | `/Users/lap14806/all-projects/falkor-writ` |
+| Plugin | `writ@writ 1.5.0` — user-scope, `~/.claude/plugins/cache/writ/writ/1.5.0` |
+| Venv | `~/.cache/writ/.venv` — **editable install pointing to the repo above** |
+| Daemon port (this repo) | `9734` (derived: `8765 + cksum(repo_root) % 1000`) |
+
+Because the venv is an editable install, Python changes in `writ/` are already visible to
+`import` — but the **running daemon has the old modules in memory** and must be restarted to
+pick them up.
+
+---
+
+### Step 1 — Pull and see what changed
+
+```bash
+cd ~/all-projects/falkor-writ
+git pull
+git diff HEAD~1 --name-only
+```
+
+---
+
+### Step 2 — Act on what changed
+
+| Files changed | Action |
+|---|---|
+| `writ/` Python code | Restart daemon (Step 3) |
+| `bible/` rule files | Re-ingest + restart daemon (Step 4) |
+| `writ.toml` | Restart daemon (Step 3) |
+| `pyproject.toml` (new deps) | Install deps (Step 5) + restart daemon (Step 3) |
+| `.claude/hooks/` scripts | Restart Claude Code — hooks are shell scripts re-executed fresh; just need a new session |
+| `scripts/bootstrap-plugin.sh` | Re-run bootstrap (Step 6) — only if bootstrap itself changed |
+
+---
+
+### Step 3 — Restart daemon
+
+```bash
+# Stop daemon + its redis
+WRIT_PORT=9734 bash ~/all-projects/falkor-writ/scripts/stop-server.sh
+
+# Verify stopped
+curl -s http://localhost:9734/health || echo "stopped"
+
+# The RAG hook auto-restarts on next Claude prompt. Or start manually:
+cd ~/all-projects/falkor-writ
+~/.cache/writ/.venv/bin/writ serve --port 9734 &
+curl -s http://localhost:9734/health   # wait ~5s then check
+```
+
+---
+
+### Step 4 — Re-ingest rules (only if `bible/` changed)
+
+```bash
+# Daemon must be STOPPED before direct graph write (single-writer lock)
+WRIT_PORT=9734 bash ~/all-projects/falkor-writ/scripts/stop-server.sh
+
+cd ~/all-projects/falkor-writ
+~/.cache/writ/.venv/bin/writ ingest bible/
+
+# Then restart
+~/.cache/writ/.venv/bin/writ serve --port 9734 &
+curl -s http://localhost:9734/health
+```
+
+---
+
+### Step 5 — Install new Python dependencies (only if `pyproject.toml` changed)
+
+```bash
+~/.cache/writ/.venv/bin/pip install -e ~/all-projects/falkor-writ
+```
+
+Then do Step 3 (restart daemon).
+
+---
+
+### Step 6 — Re-run bootstrap (only if bootstrap script itself changed)
+
+Bootstrap is idempotent — safe to re-run. It will skip steps already done
+(venv exists, FalkorDB module downloaded, ONNX model exported).
+
+```bash
+bash ~/all-projects/falkor-writ/scripts/bootstrap-plugin.sh
+```
+
+---
+
+### Quick health check after any update
+
+```bash
+curl -s http://localhost:9734/health | python3 -m json.tool
+# Expect: "status":"healthy", rule_count > 0, index_state":"warm"
+```
