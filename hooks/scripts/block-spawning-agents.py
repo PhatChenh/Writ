@@ -39,11 +39,23 @@ subagent_type = (payload.get("tool_input", {}) or {}).get("subagent_type", "") o
 if subagent_type.strip().lower() in SPAWN_CAPABLE:
     msg = (
         f"BLOCKED: subagent_type '{subagent_type or '(default=general-purpose)'}' "
-        "carries the spawn tool and can recursively spawn grandchildren "
-        "(the fan-out that burned a usage limit). Use a leaf agent type that "
-        "cannot spawn: Explore, Plan, cavecrew-investigator, or another type "
-        "without the Agent/Task tool. To override, the user must remove this hook "
-        "from the Writ plugin's hooks/hooks.json."
+        "carries the spawn tool (Tools: *) and can recursively spawn "
+        "grandchildren (the fan-out that burned a usage limit).\n"
+        "\n"
+        "ONLY spawn-capable types are blocked. ANY leaf agent that lacks the "
+        "Agent/Task tool is allowed -- INCLUDING agents that WRITE+EDIT files. "
+        "Do NOT fall back to read-only Explore when your task needs writes. "
+        "Pick by what the task needs:\n"
+        "  - EDIT/WRITE files (any scope)  -> worker (general write+read)\n"
+        "  - EDIT/WRITE, 1-2 files         -> cavecrew-builder\n"
+        "  - EDIT/WRITE, plan-driven (SDD) -> writ-implementer, reasonix-implementer\n"
+        "  - read-only search/analysis     -> Explore, cavecrew-investigator\n"
+        "  - planning                      -> Plan, writ-planner\n"
+        "All of the above are leaf agents: they do their job (writes included) "
+        "but cannot spawn, so no recursive fan-out.\n"
+        "\n"
+        "To override, the user must remove this hook from the Writ plugin's "
+        "hooks/hooks.json."
     )
     print(msg, file=sys.stderr)
     sys.exit(2)  # exit 2 = deny the tool call, surface stderr to the model

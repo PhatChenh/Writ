@@ -19,6 +19,7 @@
     "./.claude/agents/writ-implementer.md",
     "./.claude/agents/writ-plan-reviewer.md",
     "./.claude/agents/writ-planner.md",
-    "./.claude/agents/writ-test-writer.md"
+    "./.claude/agents/writ-test-writer.md",
+    "./.claude/agents/worker.md"
   ]
 }
