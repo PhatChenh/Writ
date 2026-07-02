@@ -252,30 +252,44 @@ Env-name branches couple code to a specific environment topology. Config-driven 
 **Mandatory**: false
 
 ### Trigger
-When two bounded contexts (subdomains, modules with separate responsibilities) need to communicate.
+When two bounded contexts (subdomains, modules with separate responsibilities) need to communicate, AND the contexts are (or are planned to be) independently deployable, owned by different teams, or on different release cadences.
 
 ### Statement
-Cross-domain communication uses events or messages, not direct method calls between bounded contexts. The sender publishes; the receiver subscribes. Coupling is one-way: events carry data, not references to receivers.
+Cross-domain communication between independently-deployed contexts uses events or messages, not direct method calls. The sender publishes; the receiver subscribes. Coupling is one-way: events carry data, not references to receivers.
+
+**Scope boundary — do not over-apply.** Inside a single-process monolith owned by one team, an event bus is usually speculative complexity: a direct call through a narrow interface (`inventory.reserve(items: list[SKU])`) is simpler, traceable in a debugger, and refactorable to events later at a known seam. Introduce the event indirection when a real decoupling force exists (separate deploys, separate teams, fan-out to unknown consumers, audit/replay requirement) — not because "events are cleaner." An event bus with exactly one publisher and one subscriber in the same process is a violation of DESIGN-SIMPLE-001, not compliance with this rule.
 
 ### Violation
 ```python
-# orders module:
-from inventory import reserve_items  # direct cross-context call
+# Two SEPARATELY DEPLOYED services:
+# orders service imports inventory's internals over a shared DB / direct call
+from inventory import reserve_items  # deploy-coupled cross-context call
 reserve_items(order.items)
+```
+```python
+# The opposite failure — same process, one team, no fan-out:
+event_bus.publish(ReserveRequested(...))   # indirection with no decoupling force;
+# one publisher, one subscriber, same deployment. Harder to trace, nothing gained.
 ```
 
 ### Pass
 ```python
-# orders module:
+# Separately deployed contexts:
 event_bus.publish(OrderPlaced(order_id=order.id, items=order.items))
-# inventory module subscribes to OrderPlaced and reserves.
+# inventory service subscribes to OrderPlaced and reserves.
+```
+```python
+# Same-process monolith: direct call through a narrow, typed interface.
+class InventoryPort(Protocol):
+    def reserve(self, items: list[SKU]) -> Reservation: ...
+# orders calls inventory_port.reserve(...); seam exists for later extraction.
 ```
 
 ### Enforcement
-Code review.
+Design review: require a named decoupling force (deploys, teams, fan-out, replay) before an event bus is introduced; require the narrow-interface seam when direct calls are kept.
 
 ### Rationale
-Direct calls tangle bounded contexts: changes in inventory ripple to orders. Events keep contexts independently deployable and testable.
+Events solve a deployment/team coupling problem. Where that problem does not exist, they add tracing difficulty, delivery semantics, and debugging cost for nothing. The narrow interface preserves the future seam at a fraction of the price; the criterion is the decoupling force, not the pattern's prestige.
 
 <!-- RULE END: ARCH-EVENT-001 -->
 ---
@@ -410,34 +424,44 @@ Layer skipping defeats the purpose of layers: business logic ends up duplicated 
 **Mandatory**: false
 
 ### Trigger
-When defining domain models (entities, value objects, aggregates).
+When defining domain models (entities, value objects, aggregates) that carry substantive business logic — nontrivial rules, calculations, or state machines beyond storage and display.
 
 ### Statement
-Domain models have no framework imports. Django ORM Model, SQLAlchemy Base, Spring @Entity, Active Record annotations are framework concerns; the domain model is plain data + behavior. Framework types are converted at boundaries.
+Domain models carrying substantive business logic have no framework imports. Django ORM Model, SQLAlchemy Base, Spring @Entity, Active Record annotations are framework concerns; the rich domain model is plain data + behavior, converted at boundaries.
+
+**Scope boundary — do not over-apply.** For CRUD-dominant apps where models are storage shapes with little behavior, the framework model IS the pragmatic domain model; adding a parallel dataclass layer plus mappers doubles the code for no benefit (violates DESIGN-SIMPLE-001). The graduation trigger: when a model accumulates real business rules (eligibility logic, pricing, workflow states) or logic needs reuse outside the framework (CLI, jobs), extract THAT logic into plain classes — not every model, not preemptively.
 
 ### Violation
 ```python
 from django.db import models
-class User(models.Model):  # framework-coupled
-    name = models.CharField(max_length=255)
-    def is_eligible(self): ...
+class Loan(models.Model):                     # core business entity...
+    def amortization_schedule(self): ...      # ...with heavy domain logic
+    def refinance_eligibility(self): ...      # untestable without Django + DB
+```
+```python
+# The opposite failure — a settings-record CRUD app grows a full hexagonal
+# layer: UserDTO + UserEntity + UserMapper + UserRepository for a model with
+# zero business rules. Three extra files per table, nothing protected.
 ```
 
 ### Pass
 ```python
 @dataclass
-class User:
-    id: UserId
-    name: str
-    def is_eligible(self) -> bool: ...
-# UserRepository converts Django Model <-> User dataclass at boundary.
+class Loan:                                   # rich logic lives framework-free
+    principal: Money
+    def amortization_schedule(self) -> Schedule: ...
+# LoanRecord (ORM) <-> Loan converted in the repository.
+```
+```python
+class NotificationPreference(models.Model):  # pure storage shape, no rules:
+    channel = models.CharField(...)           # framework model used directly — fine.
 ```
 
 ### Enforcement
-Code review.
+Code review: flag framework models whose methods encode business rules; flag mapper layers wrapping behavior-free models.
 
 ### Rationale
-Framework-coupled domain models drag the framework into every test, every reuse, and every refactor. Plain models are portable.
+The cost of framework coupling scales with how much logic is trapped, not with dogma. Rich logic in ORM classes is untestable and unportable — extract it. Behavior-free records gain nothing from extraction and pay a permanent mapper tax. The rule protects the logic, not the pattern.
 
 <!-- RULE END: ARCH-LAYER-002 -->
 ---
@@ -944,37 +968,47 @@ Closed-for-modification is the structural defense against regression: existing c
 **Mandatory**: false
 
 ### Trigger
-When writing a switch/match or chain of if/elif branches on a type discriminator.
+When the SAME type discriminator is switched on in two or more places, and the type set is expected to grow.
 
 ### Statement
-Switch/match on a type with more than 3 branches is replaced by polymorphism (subclass dispatch, strategy registry, visitor pattern) when the type set is extensible. Chains that hard-code every type prevent additions without editing every chain.
+When multiple dispatchers switch on the same extensible type, replace the switches with polymorphism (subclass dispatch, strategy registry, visitor pattern) so adding a type is one new class, not an edit to every chain.
+
+**Both conditions are required.** A SINGLE exhaustive match over a CLOSED type set (order states, card suits, a protocol's fixed message kinds) is good code, not a violation — especially with an exhaustiveness-checked enum/union, where the compiler/type-checker flags a missed case; polymorphism scatters that logic and silences the check. The smell is the same discriminator switched in N places, or a type set that grows with the product.
 
 ### Violation
 ```python
+# The same event.kind switched in render(), notify(), archive(), export() —
+# every new event type means hunting down and editing four chains:
 def render(event):
-    if event.kind == 'signup':
-        return render_signup(event)
-    elif event.kind == 'login':
-        return render_login(event)
-    elif event.kind == 'purchase':
-        return render_purchase(event)
-    elif event.kind == 'refund':  # added today
-        return render_refund(event)
-    # ... new event types ripple to every dispatcher
+    if event.kind == 'signup': ...
+    elif event.kind == 'login': ...
+    elif event.kind == 'purchase': ...
+    elif event.kind == 'refund': ...   # added today; three other chains forgotten
 ```
 
 ### Pass
 ```python
+# Growing type set, multiple behaviors → polymorphism:
 class Event(Protocol):
     def render(self): ...
-# Each event subclass implements its own render(). Dispatcher: event.render().
+    def notify(self): ...
+# Adding RefundEvent = one new class; no dispatcher edits.
+```
+```python
+# Closed set, one place, checker-enforced → keep the match:
+match order.status:            # OrderStatus enum, 4 fixed states
+    case OrderStatus.PENDING: ...
+    case OrderStatus.PAID: ...
+    case OrderStatus.SHIPPED: ...
+    case OrderStatus.CANCELLED: ...
+# mypy exhaustiveness check fails the build if a state is ever added unhandled.
 ```
 
 ### Enforcement
-Code review.
+Code review: count the dispatch sites for the discriminator and ask whether the set is open. Refactor to polymorphism only when (sites ≥ 2) or (set demonstrably grows).
 
 ### Rationale
-Long type switches mean each new type requires editing every dispatcher. Polymorphism puts the type-specific logic with the type.
+Long type switches replicated across dispatchers make each new type an error-prone multi-edit. But polymorphism applied to a closed set trades a compiler-verified exhaustive match for logic scattered across classes — strictly worse. The rule targets the replication, not the keyword.
 
 <!-- RULE END: SOLID-OCP-002 -->
 ---

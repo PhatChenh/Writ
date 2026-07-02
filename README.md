@@ -24,7 +24,8 @@ Writ is published as a single-plugin marketplace in this repo.
 **Prerequisites**
 
 - Python 3.11 or newer
-- Docker (Neo4j runs in a container)
+- Apple Silicon Mac (M1/M2/M3/M4) -- the FalkorDB module is arm64-only
+- Homebrew (installs Redis and the FalkorDB module for you)
 - `jq`, `curl`, `envsubst`
 
 **Install**
@@ -34,7 +35,7 @@ claude plugin marketplace add infinri/Writ
 claude plugin install writ@writ
 ```
 
-**One-time bootstrap.** Creates the venv at `${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/.venv`, brings up Neo4j, ingests the rule bible, and starts the FastAPI daemon:
+**One-time bootstrap.** Creates the venv at `${CLAUDE_PLUGIN_DATA:-$HOME/.cache/writ}/.venv`, sets up the embedded FalkorDB graph, ingests the rule bible, and starts the FastAPI daemon:
 
 ```shell
 bash $(claude plugin path writ)/scripts/bootstrap-plugin.sh
@@ -43,8 +44,8 @@ bash $(claude plugin path writ)/scripts/bootstrap-plugin.sh
 Restart Claude Code. Verify with:
 
 ```shell
-curl http://localhost:8765/health
-# {"status":"healthy"}
+writ status
+# {"status":"healthy","rule_count":276,"mandatory_count":30,"index_state":"warm"}
 ```
 
 **Patch global config (plugin mode only).** Plugin installs do not write to `~/.claude/settings.json`. The Writ-specific Bash allowlist that suppresses permission prompts for read-only and onboarding commands is missing. Run this once after bootstrap to merge it in:
@@ -70,7 +71,7 @@ Three things break when you give a coding agent a large rulebook the obvious way
 
 ## What Writ does about it
 
-Two layers, sharing a Neo4j-backed knowledge graph:
+Two layers, sharing a FalkorDB-backed knowledge graph:
 
 **The knowledge layer (the librarian).** A FastAPI service on `localhost:8765` that runs a five-stage hybrid retrieval pipeline:
 
@@ -99,7 +100,7 @@ cd ~/.claude/skills/writ
 bash scripts/bootstrap.sh
 ```
 
-The bootstrap script handles everything: prerequisite checks (Python 3.11+, Docker, git, envsubst), virtualenv, dependency install, harness config rendered into `~/.claude/`, rule and agent symlinks, Neo4j container via Docker Compose, rule corpus ingestion, and Writ daemon startup. Idempotent.
+The bootstrap script handles everything: prerequisite checks (Python 3.11+, Homebrew, git, jq, curl, envsubst), Redis install, virtualenv, dependency install, harness config rendered into `~/.claude/`, rule and agent symlinks, FalkorDB module download, rule corpus ingestion, and Writ daemon startup. Idempotent.
 
 Verify:
 
@@ -196,7 +197,7 @@ These are not bugs in the spec. They are the boundary of what agent-side matchin
 
 ### Writ's alternative
 
-Writ models skills, playbooks, rationalizations, and forbidden-response sets as nodes in a hybrid-RAG knowledge graph (Neo4j-backed), retrieved by the same five-stage pipeline that surfaces rules: domain filter, BM25 keyword (Tantivy), ANN vector (hnswlib), graph traversal over a pre-computed adjacency cache, weighted ranking. The agent does not match descriptions; the pipeline matches text plus tool state plus filesystem context.
+Writ models skills, playbooks, rationalizations, and forbidden-response sets as nodes in a hybrid-RAG knowledge graph (FalkorDB-backed), retrieved by the same five-stage pipeline that surfaces rules: domain filter, BM25 keyword (Tantivy), ANN vector (hnswlib), graph traversal over a pre-computed adjacency cache, weighted ranking. The agent does not match descriptions; the pipeline matches text plus tool state plus filesystem context.
 
 Two architectural splits make this practical:
 
@@ -220,7 +221,7 @@ Same problem space, different optimization frontiers.
 | `writ serve [--host --port]` | Start the FastAPI service via uvicorn (default `localhost:8765`). |
 | `writ status` | Health check via the HTTP service. |
 | `writ query <text> [--domain --budget]` | Run a retrieval query. |
-| `writ import-markdown [path]` | Ingest rules from `bible/` Markdown into Neo4j. Auto-exports back on success. |
+| `writ import-markdown [path]` | Ingest rules from `bible/` Markdown into the graph. Auto-exports back on success. |
 | `writ export [output]` | Regenerate Markdown from graph (overwrites output dir). |
 | `writ add` | Interactive add-a-new-rule wizard. Schema validates, redundancy checks, suggests edges, writes. |
 | `writ edit <rule_id>` | Edit existing rule with current values as defaults. |
@@ -229,7 +230,7 @@ Same problem space, different optimization frontiers.
 | `writ propose ...` | Submit AI authored rule through structural gate. |
 | `writ review [rule_id] [--promote --reject --downweight --stats]` | Triage AI provisional rules. |
 | `writ feedback <rule_id> <positive\|negative>` | Record feedback signal. |
-| `writ import-markdown [PATH] [--only TYPE[,...]] [--dry-run]` | Import Markdown bible (Rules + methodology) into Neo4j. Default path `bible/`; `--only` filters node types; `--dry-run` validates without writing. |
+| `writ import-markdown [PATH] [--only TYPE[,...]] [--dry-run]` | Import Markdown bible (Rules + methodology) into the graph. Default path `bible/`; `--only` filters node types; `--dry-run` validates without writing. |
 | `writ migrate` | Backward-compat shim. Delegates in-process to `writ import-markdown` with defaults (full corpus, write-through). |
 | `writ analyze-friction [flags]` | Analyze `workflow-friction.log`: rule effectiveness, skill usage, playbook compliance, graduation candidates, trim candidates, quality judge false positives. |
 | `writ audit-session <session_id>` | Per-session timeline and summary. |
@@ -239,12 +240,11 @@ Same problem space, different optimization frontiers.
 
 Common issues and fixes:
 
-- **`Docker daemon not reachable`**: start Docker Desktop, or `sudo systemctl start docker` on Linux, then re-run `bootstrap.sh`.
+- **`x86_64 is not supported`**: Writ requires an Apple Silicon Mac; the FalkorDB module has no Intel build.
 - **`python3 version is 3.9; need >= 3.11`**: install a newer Python. `pyenv` is a clean way to manage versions without touching system Python.
-- **`port 7687 already in use`**: another Neo4j instance is running. Either stop it (`docker stop <container>`) or change the `ports:` mapping in `docker-compose.yml`.
-- **`Neo4j did not become reachable within 60s`**: check logs (`docker compose logs neo4j`). Common cause: insufficient memory allocated to Docker Desktop (Neo4j needs ~1 GB).
+- **`ConnectionRefusedError` / daemon does not answer**: a stale embedded Redis socket from a crashed run. Clear it: `pkill -f "redis-server unixsocket:/tmp/writ-" ; rm -f /tmp/writ-*/redis.sock` plus the repo `.writ/graph.lock`, then re-run bootstrap.
+- **`does not have execute permissions` on `vendor/falkordb.so`**: run `chmod +x vendor/falkordb.so` (a manual curl download does not set the executable bit).
 - **`daemon did not become healthy within 10s`**: check `/tmp/writ-server.log`. Usually an import error; re-run `pip install -e .` from the skill directory with the venv activated.
-- **Default Neo4j credentials (`neo4j/writdevpass`)**: a development default. For any non-local use, change `NEO4J_AUTH` in `docker-compose.yml` and the matching `[neo4j]` section in `writ.toml`.
 
 ## API reference
 
@@ -258,7 +258,7 @@ All endpoints under `http://localhost:8765`. JSON bodies; no auth (binds localho
 | `POST` | `/propose` | Submit AI authored rule through the 5-check structural gate. |
 | `POST` | `/feedback` | Record a positive or negative signal for a rule. |
 | `POST` | `/conflicts` | Check `CONFLICTS_WITH` edges among a list of rule IDs. |
-| `GET` | `/health` | Real Neo4j round-trip; reports rule count, mandatory count, index state, startup time. |
+| `GET` | `/health` | Real graph round-trip; reports rule count, mandatory count, index state, startup time. |
 | `GET` | `/always-on` | Returns mandatory rules plus `ForbiddenResponse` nodes plus always-on Skills/Playbooks. Mode-scoped. |
 | `GET` | `/subagent-role/{name}` | Resolve `writ-explorer` to its role record. |
 | `POST` | `/pre-write-check` | Consolidated gate plus final-gate plus RAG check. |
@@ -271,16 +271,15 @@ Errors come back as HTTP 200 with `{"error": "..."}` for logical failures, 422 f
 
 | File | Purpose |
 |---|---|
-| `writ.toml` | Service configuration: Neo4j credentials, ranking weights, embedding model, context budgets, gate thresholds. |
-| `pyproject.toml` | Package metadata. Production deps: fastapi, uvicorn, neo4j, tantivy, sentence-transformers, hnswlib, pydantic, typer, rich, httpx. Entry point: `writ = "writ.cli:app"`. |
+| `writ.toml` | Service configuration: FalkorDB module path, ranking weights, embedding model, context budgets, gate thresholds. |
+| `pyproject.toml` | Package metadata. Production deps: fastapi, uvicorn, falkordb, tantivy, sentence-transformers, hnswlib, pydantic, typer, rich, httpx. Entry point: `writ = "writ.cli:app"`. |
 | `.claude-plugin/plugin.json` | Plugin manifest. `defaultEnabled: true`. Lifecycle Init invokes `scripts/ensure-server.sh`; Shutdown invokes `scripts/stop-server.sh`. |
-| `docker-compose.yml` | Single `neo4j:5` service on ports 7474 and 7687, health-checked via cypher-shell. |
 | `templates/settings.json` | Canonical hook wiring (30 hooks). |
 | `bin/lib/checklists.json` | Phase exit criteria. |
 | `bin/lib/gate-categories.json` | File classification glob patterns plus framework detection. |
 | `writ/shared/budget.json` | Single source of truth for budget constants (default 8000, summary cost 40, standard 120, full 200, always_on_cap 5000). |
 
-Environment variables read by hooks: `WRIT_HOST` (default `localhost`), `WRIT_PORT_OVERRIDE` (pins the daemon port; otherwise the per-repo port is derived in `bin/lib/common.sh` as `8765 + cksum(repo_root) % 1000`, D4-02 "A-auto" — a bare `WRIT_PORT` is **not** honored by hooks, only by the standalone `scripts/stop-server.sh`/`ensure-server.sh`), `WRIT_CACHE_DIR` (default `tempfile.gettempdir()`), `WRIT_FRICTION_LOG`, `WRIT_HOOK_LOG`, `WRIT_DEBUG_LOG`. Neo4j credentials are read from `writ.toml` only; there is no `WRIT_NEO4J_*` override.
+Environment variables read by hooks: `WRIT_HOST` (default `localhost`), `WRIT_PORT_OVERRIDE` (pins the daemon port; otherwise the per-repo port is derived in `bin/lib/common.sh` as `8765 + cksum(repo_root) % 1000`, D4-02 "A-auto" — a bare `WRIT_PORT` is **not** honored by hooks, only by the standalone `scripts/stop-server.sh`/`ensure-server.sh`), `WRIT_CACHE_DIR` (default `tempfile.gettempdir()`), `WRIT_FRICTION_LOG`, `WRIT_HOOK_LOG`, `WRIT_DEBUG_LOG`. The FalkorDB graph is embedded (no server credentials); its module path is set in `writ.toml` under `[falkordb]`.
 
 ## Testing
 
@@ -296,9 +295,9 @@ Pre-commit: `make bench` runs at `pre-push`. No formatting or lint hooks configu
 
 The benchmark suite has four files:
 - `benchmarks/bench_targets.py` (13 contractual targets at v1.1.0, all pass/fail; was 12 pre-v1.1.0).
-- `benchmarks/run_benchmarks.py` (Neo4j traversal scale at 1K and 10K nodes; wipes the graph).
+- `benchmarks/run_benchmarks.py` (FalkorDB traversal scale at 1K and 10K nodes; wipes the graph).
 - `benchmarks/scale_benchmark.py` (the synthetic 80/500/1K/10K scale curve generator; restores only Rule nodes).
-- `benchmarks/methodology_bench.py` (methodology retrieval against the curated 40-query Phase 0 corpus; read only, no Neo4j changes).
+- `benchmarks/methodology_bench.py` (methodology retrieval against the curated 40-query Phase 0 corpus; read only, no graph changes).
 
 ## Status
 
@@ -320,7 +319,7 @@ The standalone install at `~/.claude/skills/writ/` will keep working; the plugin
 1. Stop the existing daemon: `bash ~/.claude/skills/writ/scripts/stop-server.sh`
 2. Remove the symlinks the standalone bootstrap created: `rm -f ~/.claude/rules/writ-*.md ~/.claude/agents/writ-*.md`
 3. Remove the rendered hook block from `~/.claude/settings.json` (the `permissions.allow` and `hooks` sections that reference `$HOME/.claude/skills/writ/.claude/hooks/`). Back up the file first.
-4. Install the plugin as described in "Install as a Claude Code plugin" above. The Neo4j Docker volume (`writ-neo4j-data`) is shared between modes, so the rule corpus survives the switch.
+4. Install the plugin as described in "Install as a Claude Code plugin" above. The rule corpus lives in the embedded FalkorDB graph and is re-ingested by bootstrap, so it survives the switch.
 
 The standalone-skill checkout itself can stay on disk; nothing in the plugin install path looks at it.
 
