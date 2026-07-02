@@ -155,7 +155,7 @@ digraph loop {
 
 1. **Interactive front (main thread).** Run only the parts of the step that need the human or are inherently multi-turn — see the per-step table. Lock those decisions.
 2. **Dispatch the survey (subagent).** Use the matching dispatch template below. The subagent reads the skill by path, does the heavy reading, writes the artifact to its destination folder, and returns a ≤1-page summary. It defers any question it hits into the artifact instead of asking.
-3. **Review gate (main thread).** Read the subagent's *summary* (not the artifact's code). Surface any deferred questions to the human via `AskUserQuestion`. If the human changes a decision, re-dispatch to finalize. Apply rule 4: if research returned invalidated assumptions, STOP.
+3. **Review gate (main thread).** Read the subagent's *summary* (not the artifact's code). Before surfacing anything, write the user a **plain-language decision brief** (≤10 lines): what was produced, the 1–3 real choices embedded in it, what happens if each choice is wrong, and what the user can check *without reading code*. End with: "Want me to explain any part of this before you approve?" Never ask the user to approve on the artifact's own text alone — the brief is the approval surface; the artifact is the record. Then surface any deferred questions to the human via `AskUserQuestion`. If the human changes a decision, re-dispatch to finalize. Apply rule 4: if research returned invalidated assumptions, STOP.
 4. **Phase transition gate (main thread).** Before dispatching the next phase's subagent, output a brief message to the user:
    - Which phase just completed and what artifact was written (path)
    - Which phase is next and what it will do in one sentence
@@ -222,6 +222,24 @@ Empty output → no constraints, inject nothing (no forced minimum). Otherwise p
 
 ---
 
+## Adversarial design review (medium + heavy tiers — after the design review gate, before spec)
+
+Factual-code-verification attacks the spec's *facts*; nothing in the base loop attacks the design *decision* itself — and a non-coder user cannot. So after the design review gate passes and BEFORE dispatching spec, dispatch ONE fresh red-team subagent against the chosen design. Fresh context is the point: it must not inherit the reasoning that produced the design. If a second strong model is available (e.g. a deepseek Pro / GLM session via `dsk`), prefer it — cross-model attack surfaces blind spots a same-model reviewer shares; a fresh same-model subagent is the fallback and still worthwhile. Skip for tiny tier.
+
+Dispatch template:
+
+```
+NON-INTERACTIVE: true
+You are a red-team design reviewer. Read the design doc at "docs/AI_artifacts/1_design/<slug>.md" and the repo's CLAUDE.md. You did NOT write this design and owe it nothing.
+Your ONLY job: find reasons the CHOSEN approach fails — hidden coupling, a rejected alternative that is actually stronger, an assumption the codebase contradicts, a simpler design that removes the problem entirely, an irreversibility trap.
+Rules: steelman the design first (one paragraph — attack its strongest form). Every attack must cite concrete evidence (file:line, a contract, a specific scenario) — no vibes. Rank each attack: FATAL (do not proceed) / SERIOUS (design change needed) / NOTE (spec-level fix). If the design survives, say so plainly — do NOT invent findings to look useful.
+Return ≤1 page: steelman + ranked attacks + verdict (proceed / revise / rethink).
+```
+
+**Adjudication (orchestrator, strong model — never delegated):** for each FATAL/SERIOUS attack, verify the cited evidence yourself with a targeted read (adjudication, not surveying). Evidence holds → loop back to the design step with the attack as an input. Evidence fails → record the dismissal in the design doc's Open Questions ("red-team attack X dismissed: Y"). Never dismiss an attack by preferring the original framing — only by evidence. Fold the verdict into the next decision brief so the user sees the design was attacked and what survived.
+
+---
+
 ## Factual-code-verification loop-back (resolving invalidated assumptions)
 
 When a factual-code-verification dispatch returns invalidated assumptions, the orchestrator does NOT proceed to plan — but it also does not, by default, dump the whole problem back on the human. It drives a **bounded** resolution loop. Classify each invalidated assumption:
@@ -273,6 +291,7 @@ The skills know these paths, but **always restate the exact destination in the d
 | **CONSTRAINTS.md / TECH_DEBT.md** (new constraint or debt surfaced) | any step that surfaces one | call `/guardrail-check Write` to record it before the step finishes |
 | **OPEN_QUESTIONS.md** (unresolved decisions) | design + plan steps | sync the artifact's "Open Questions" section into root `OPEN_QUESTIONS.md`; mark blockers |
 | **ADR** (hard-to-reverse + surprising + real-tradeoff decision) | design step | the design skill offers it when all three gates pass — accept the offer and write it |
+| **STATE.md** (targeted position sync) | after EACH completed step (design / spec / factual-code-verification / plan) | run `update-project-docs` mid-flight targeted mode — update current position + latest artifact pointer ONLY (not a full sweep), so an interrupted pipeline hands the next session full context. Do NOT wait for the user to ask. |
 
 > **Diagrams temporarily disabled** — the draw-diagram skill is being reworked. The pipeline runs diagram-free for now: skills write plain-English architecture/overview prose instead of Q1–Q5 diagrams. Do not call `/draw-diagram` from any step.
 
@@ -287,7 +306,7 @@ After the plan is written (and only if no hard stop fired), update the project's
 - Invoke the `update-project-docs` skill (session-end sweep) to update **STATE.md** and **CLAUDE.md** — current position, what was built/planned, open questions, tech debt.
 - Confirm **OPEN_QUESTIONS.md** reflects any blockers the plan raised.
 
-Do this once, at the end — not per step (per-step writes churn STATE.md mid-feature).
+The FULL sweep runs once, here at the end — but the targeted per-step STATE.md position sync from the cross-cutting table above is mandatory after every step (a full per-step sweep would churn STATE.md mid-feature; the targeted sync doesn't). Both are part of the pipeline itself — never wait for the user to ask. Mechanical backstop: the `writ-doc-sync-gate` Stop hook blocks the turn when a pipeline artifact is newer than STATE.md.
 
 ---
 
@@ -402,7 +421,7 @@ blast-radius when you Read the spec/plan). ## E2E Done Criteria = a real end-use
 LIVE stack with observed signals (logs/DB/UI), mapped to the ## Capabilities IDs — not a restatement of unit tests.
 
 Write the plan to "docs/AI_artifacts/4_plans/<slug>.md". Non-coder readable is the default.
-Do NOT run plan-from-specs Step 6 (the mid-session STATE.md write) — the orchestrator updates STATE.md once at pipeline end.
+Do NOT run plan-from-specs Step 6 (the mid-session STATE.md write) — the ORCHESTRATOR owns STATE.md (targeted position sync after each step + full sweep at pipeline end), never the subagent.
 Return a ≤1-page summary + any open questions.
 ```
 
@@ -463,6 +482,9 @@ Return a ≤1-page summary + any open questions + tier escalation if triggered.
 | "The review gate went well, I'll just dispatch the next phase." | Phase transition gate is required. Output the transition message and wait for confirmation first. |
 | "Save tokens — let the cheap survey's behavior-claim finding stand without re-reading." | Behavior claims need strong-model depth (rule 2 + efficient-mode guard 2). Cheap gathers; the orchestrator confirms the load-bearing body. |
 | "Token pressure — I'll cheap-delegate a decision / the factual-code-verification verdict / an ADR." | Decisions, the verification adjudication, and contracts are never delegated to cheap (efficient-mode). Compress legwork, never judgment. |
+| "Design passed the review gate — the red team is overhead, skip it." | Medium/heavy runs the adversarial gate. The user cannot attack a design; the red team is the only adversarial check on the decision itself. |
+| "Red-team raised a SERIOUS attack but the schedule is tight — I'll soften it to a NOTE." | Adjudicate by evidence only. A verified SERIOUS attack loops back to design; an unverified one is dismissed with the evidence recorded. Never re-graded by convenience. |
+| "I'll ask the user to approve straight from the subagent's summary." | Every gate needs the plain-language decision brief first (what / why / what-if-wrong / how-to-check). The brief is the approval surface. |
 
 ---
 

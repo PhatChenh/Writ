@@ -1,10 +1,34 @@
 {
   "extends_defaults": true,
   "artifacts": {
-    "design":   ["docs/AI_artifacts/1_design/*.md"],
-    "spec":     ["docs/AI_artifacts/2_specs/*.md"],
-    "research": ["docs/AI_artifacts/3_research/*.md"],
-    "plan":     ["docs/AI_artifacts/4_plans/*.md"],
-    "handoff":  [".claude/handoffs/*.md"]
+    "design": [
+      "docs/AI_artifacts/1_design/*.md"
+    ],
+    "spec": [
+      "docs/AI_artifacts/2_specs/*.md"
+    ],
+    "research": [
+      "docs/AI_artifacts/3_research/*.md"
+    ],
+    "plan": [
+      "docs/AI_artifacts/4_plans/*.md"
+    ],
+    "handoff": [
+      ".claude/handoffs/*.md"
+    ],
+    "architecture": [
+      "architecture.md",
+      "docs/roadmap/architecture.md",
+      "docs/architecture/architecture.md"
+    ],
+    "project_design": [
+      "docs/roadmap/project-design.md"
+    ],
+    "roadmap": [
+      "docs/roadmap/roadmap.md"
+    ],
+    "contracts": [
+      "docs/roadmap/skeleton-contracts.md"
+    ]
   }
 }

@@ -64,10 +64,11 @@ Use the literal key `default`: the gate computes its task key as `default` (Task
 
 Give it `base_sha` + `head_sha`. It returns JSON `{"status": "approved"|"changes_requested", "critical": [...], "important": [...], "minor": [...]}`.
 
-**5. Act on feedback:**
-- Fix Critical issues immediately
-- Fix Important issues before proceeding
-- Note Minor issues for later
+**5. Adjudicate, then act:**
+- **Verify before fixing.** For every Critical/Important finding, confirm it yourself first — run the failing case or read the cited code. Reviewers (any model) over-fire; "fixing" a false positive damages working code. A finding you could not reproduce or confirm goes back to the reviewer or is dismissed with the evidence recorded — never into the diff.
+- **Cross-model disagreement is settled by evidence, never authority.** When two reviewers (Claude / deepseek / GLM) disagree, the tiebreaker is a run or a read that proves one side — not the stronger model's word, not majority vote.
+- Fix confirmed Critical issues immediately; confirmed Important before proceeding; note Minor for later.
+- **Report to the user in plain language:** one sentence per confirmed finding — what it means in outcome terms and what was done about it. The user should be able to follow the review's result without reading the JSON.
 - Push back if a reviewer is wrong — with code/tests that prove it
 
 ## Integration with Workflows
